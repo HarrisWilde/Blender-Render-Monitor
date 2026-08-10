@@ -235,6 +235,18 @@ class TestRmJob(unittest.TestCase):
         )
         self.assertEqual(entry["samples"], 80)  # 保持最大值，不回退
 
+    def test_render_stats_remaining_does_not_go_backwards(self):
+        # 收尾阶段 Cycles 的 Remaining 可能异常变大，应保持单调不增
+        entry, progress = self._stats_entry()
+        self.rm_job._on_render_stats(
+            "Remaining: 00:01.33 | Mem: 35M | Sample 80/512"
+        )
+        self.assertAlmostEqual(entry["remaining"], 1.33, places=2)
+        self.rm_job._on_render_stats(
+            "Remaining: 00:15.00 | Mem: 35M | Sample 0/512"
+        )
+        self.assertAlmostEqual(entry["remaining"], 1.33, places=2)  # 不回退变大
+
 
 if __name__ == "__main__":
     unittest.main()

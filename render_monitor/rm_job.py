@@ -92,7 +92,12 @@ def _on_render_stats(stats_str):
         if has_time:  # 帧完成时的精确已用时间
             entry["elapsed"] = parsed["time"]
         if "remaining" in parsed:
-            entry["remaining"] = parsed["remaining"]
+            # Remaining 是 Cycles 对剩余采样时间的估计；收尾阶段（去噪/保存）
+            # 可能发出异常回退变大的值，只接受更小的值（单调不增）。
+            cur_rem = entry.get("remaining")
+            new_rem = parsed["remaining"]
+            if cur_rem is None or new_rem < cur_rem:
+                entry["remaining"] = new_rem
         now = time.monotonic()
         if _stats["start"] is not None and now - _stats["last_write"] >= 0.5:
             _stats["last_write"] = now
