@@ -61,6 +61,8 @@ def build_output_path(outdir_abs: str, filename: str, ext: str) -> str:
 # Cycles 采样阶段："Remaining: 00:01.33 | Mem: 6M | Sample 96/256"
 _SAMPLE_RE = re.compile(r"Sample (\d+)/(\d+)")
 _REMAINING_RE = re.compile(r"Remaining:\s*([\d:.]+)")
+# 大图分块渲染："Rendered 1/4 Tiles, Sample 80/128"（块切换后采样计数重置）
+_TILES_RE = re.compile(r"Rendered (\d+)/(\d+) Tiles")
 # 帧完成："Time: 00:01.00 (Saving: 00:00.11)"
 _TIME_RE = re.compile(r"Time:\s*([\d:.]+)")
 
@@ -85,7 +87,8 @@ def parse_render_stats(stats: str) -> dict:
     """从 render_stats 字符串解析渲染进度。
 
     返回 dict（字段缺失则不出现）：
-    - samples / samples_total: Cycles 当前采样 / 总采样
+    - samples / samples_total: Cycles 当前块（tile）的当前采样 / 总采样
+    - tiles_done / tiles_total: 已渲染完成的分块数 / 分块总数（大图分块渲染）
     - remaining: Blender 预计剩余时间（秒）
     - time: 本帧渲染已用时间（秒，帧完成时的精确值）
     """
@@ -96,6 +99,10 @@ def parse_render_stats(stats: str) -> dict:
     if m:
         out["samples"] = int(m.group(1))
         out["samples_total"] = int(m.group(2))
+    m = _TILES_RE.search(stats)
+    if m:
+        out["tiles_done"] = int(m.group(1))
+        out["tiles_total"] = int(m.group(2))
     m = _REMAINING_RE.search(stats)
     if m:
         remaining = _parse_timer(m.group(1))

@@ -238,17 +238,42 @@ class TestRmJob(unittest.TestCase):
             payload = json.load(f)
         self.assertNotIn("samples", payload["shots"][0])
 
-    def test_render_stats_sample_does_not_go_backwards(self):
-        # Cycles 渲染末尾会把采样计数重置为 0，进度不应回退
-        entry, progress = self._stats_entry()
+    def test_tile_switch_updates_samples_and_progress(self):
+        # 大图分块渲染：块切换时采样重置为当前块的值，整体进度单调推进
+        entry, _ = self._stats_entry()
         self.rm_job._on_render_stats(
-            "Remaining: 00:03.60 | Mem: 13M | Sample 80/400"
+            "Remaining: 00:15.41 | Mem: 306M | Rendered 0/4 Tiles, Sample 128/128"
         )
-        self.assertEqual(entry["samples"], 80)
+        self.assertEqual(entry["samples"], 128)
+        self.assertEqual(entry["tiles_done"], 0)
+        self.assertEqual(entry["tiles_total"], 4)
+        self.assertAlmostEqual(entry["progress"], 0.25, places=3)
+        # 块切换：采样重置，进度 =（1 + 1/128）/ 4，不下降
         self.rm_job._on_render_stats(
-            "Remaining: 00:05.69 | Mem: 13M | Sample 0/400"
+            "Remaining: 00:15.34 | Mem: 268M | Rendered 1/4 Tiles, Sample 1/128"
         )
-        self.assertEqual(entry["samples"], 80)  # 保持最大值，不回退
+        self.assertEqual(entry["samples"], 1)
+        self.assertAlmostEqual(entry["progress"], (1 + 1 / 128) / 4, places=3)
+        # 同一块内采样推进
+        self.rm_job._on_render_stats(
+            "Remaining: 00:06.41 | Mem: 268M | Rendered 1/4 Tiles, Sample 80/128"
+        )
+        self.assertAlmostEqual(entry["progress"], (1 + 80 / 128) / 4, places=3)
+
+    def test_finalize_phase_detected(self):
+        # 收尾阶段（去噪/合成/保存）被标记，进度置满
+        entry, _ = self._stats_entry()
+        self.rm_job._on_render_stats(
+            "Remaining: 00:12.36 | Mem: 602M | ViewLayer | Finishing"
+        )
+        self.assertEqual(entry["phase"], "finalize")
+        self.assertEqual(entry["progress"], 1.0)
+
+    def test_no_finalize_during_sampling(self):
+        # 采样阶段不会被误标记为收尾
+        entry, _ = self._stats_entry()
+        self.rm_job._on_render_stats("Remaining: 00:01.33 | Mem: 35M | Sample 96/128")
+        self.assertNotIn("phase", entry)
 
 
 if __name__ == "__main__":

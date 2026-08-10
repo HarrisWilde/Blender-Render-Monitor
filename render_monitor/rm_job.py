@@ -83,11 +83,34 @@ def _on_render_stats(stats_str):
             return
         parsed = utils.parse_render_stats(stats_str)
         if "samples" in parsed:
-            # Cycles 在渲染末尾会把采样计数重置为 0（内部行为），
-            # 取历史最大值避免进度回退。
-            if parsed["samples"] > entry.get("samples", 0):
-                entry["samples"] = parsed["samples"]
+            # 大图分块渲染时 Sample 是「当前块」的计数，块切换会重置，
+            # 直接显示当前值（配合块进度展示整体状态）。
+            entry["samples"] = parsed["samples"]
             entry["samples_total"] = parsed["samples_total"]
+        if "tiles_done" in parsed:
+            entry["tiles_done"] = parsed["tiles_done"]
+            entry["tiles_total"] = parsed["tiles_total"]
+        # 整体进度 =（已完成块数 + 当前块采样进度）/ 块总数；
+        # 取历史最大值，避免块切换时进度条回退。
+        total = entry.get("samples_total") or 0
+        cur = entry.get("samples") or 0
+        tdone = entry.get("tiles_done") or 0
+        ttotal = entry.get("tiles_total") or 1
+        if total > 0:
+            if ttotal > 1:
+                prog = (tdone + cur / total) / ttotal
+            else:
+                prog = cur / total
+            if prog > entry.get("progress", 0.0):
+                entry["progress"] = prog
+        # 收尾阶段（去噪/合成/保存）检测：此时渲染未结束但不再有采样统计，
+        # 采样实际已完成，进度置满。
+        if any(
+            k in stats_str
+            for k in ("Finished", "Denoising", "Finishing", "Reading full buffer")
+        ):
+            entry["phase"] = "finalize"
+            entry["progress"] = 1.0
         has_time = "time" in parsed
         if has_time:  # 帧完成时的精确已用时间
             entry["elapsed"] = parsed["time"]
@@ -214,7 +237,10 @@ def _main():
             # 标记渲染中并立即上报，主进程才能显示"正在渲染：名称"
             entry["status"] = "RENDERING"
             # 初始化实时统计字段（render_stats handler 会持续更新）
-            entry.update(samples=0, samples_total=0, elapsed=0.0, remaining=None)
+            entry.update(
+                samples=0, samples_total=0, elapsed=0.0, remaining=None,
+                tiles_done=0, tiles_total=1, progress=0.0, phase="",
+            )
             _stats.update(
                 entry=entry,
                 start=time.monotonic(),

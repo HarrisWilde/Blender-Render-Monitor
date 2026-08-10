@@ -15,7 +15,7 @@ from __future__ import annotations
 bl_info = {
     "name": "Render Monitor 渲染监视器",
     "author": "Render Monitor Contributors",
-    "version": (1, 2, 0),
+    "version": (1, 3, 0),
     "blender": (5, 2, 0),
     "location": "3D Viewport > Sidebar (N) > Render Monitor",
     "description": "把场景状态记录为快照并批量后台渲染（UI 不冻结），类似 KeyShot 的 Render Monitor",
@@ -30,6 +30,7 @@ try:
         BoolProperty,
         CollectionProperty,
         EnumProperty,
+        FloatProperty,
         IntProperty,
         StringProperty,
     )
@@ -37,6 +38,7 @@ try:
 except ImportError:  # 非 Blender 环境（如单元测试）下允许导入包
     bpy = None
     BoolProperty = CollectionProperty = EnumProperty = IntProperty = StringProperty = None
+    FloatProperty = None
     Panel = PropertyGroup = UIList = None
 
 from . import core  # noqa: E402
@@ -112,6 +114,12 @@ def register_scene_props():
     bpy.types.Scene.rm_render_samples = StringProperty(name="当前采样", default="")
     bpy.types.Scene.rm_render_samples_cur = IntProperty(name="当前采样数", default=0, min=0)
     bpy.types.Scene.rm_render_samples_total = IntProperty(name="总采样数", default=0, min=0)
+    bpy.types.Scene.rm_render_tiles_done = IntProperty(name="已完成块数", default=0, min=0)
+    bpy.types.Scene.rm_render_tiles_total = IntProperty(name="总块数", default=1, min=1)
+    bpy.types.Scene.rm_render_progress = FloatProperty(
+        name="整体进度", default=0.0, min=0.0, max=1.0, precision=3
+    )
+    bpy.types.Scene.rm_render_phase = StringProperty(name="渲染阶段", default="")
     bpy.types.Scene.rm_render_time = StringProperty(name="已用时间", default="")
     bpy.types.Scene.rm_render_remaining = StringProperty(name="预计剩余", default="")
     bpy.types.Scene.rm_last_message = StringProperty(name="最近消息", default="")
@@ -134,6 +142,10 @@ def unregister_scene_props():
         "rm_render_samples",
         "rm_render_samples_cur",
         "rm_render_samples_total",
+        "rm_render_tiles_done",
+        "rm_render_tiles_total",
+        "rm_render_progress",
+        "rm_render_phase",
         "rm_render_time",
         "rm_render_remaining",
         "rm_last_message",

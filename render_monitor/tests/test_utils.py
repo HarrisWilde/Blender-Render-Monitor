@@ -99,6 +99,18 @@ class TestParseRenderStats(unittest.TestCase):
         self.assertAlmostEqual(out["remaining"], 1.33, places=2)
         self.assertNotIn("time", out)
 
+    def test_tiled_render(self):
+        # 大图分块渲染：解析块进度（块切换后采样计数会重置）
+        out = parse_render_stats(
+            "Remaining: 00:15.41 | Mem: 306M | Rendered 1/4 Tiles, Sample 128/128"
+        )
+        self.assertEqual(out["tiles_done"], 1)
+        self.assertEqual(out["tiles_total"], 4)
+        self.assertEqual(out["samples"], 128)
+        self.assertEqual(out["samples_total"], 128)
+        # 无分块的 stats 不含 tiles 字段
+        self.assertNotIn("tiles_done", parse_render_stats("Mem: 6M | Sample 96/256"))
+
     def test_cycles_frame_done(self):
         # 帧完成：精确已用时间
         out = parse_render_stats("Time: 00:01.00 (Saving: 00:00.11)")

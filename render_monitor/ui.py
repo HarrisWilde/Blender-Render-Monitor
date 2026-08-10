@@ -42,7 +42,9 @@ class RM_PT_panel(Panel):
         scene = context.scene
         layout = self.layout
 
-        # ---- 快照列表 ----
+        # ---- 快照列表（显示所属场景，便于区分多场景下的独立快照）----
+        layout.label(text=f"场景：{scene.name}（共 {len(scene.rm_shots)} 个快照）",
+                     icon="SCENE_DATA")
         row = layout.row()
         row.template_list("RM_UL_shots", "", scene, "rm_shots", scene, "rm_shots_active")
         col = row.column(align=True)
@@ -58,6 +60,8 @@ class RM_PT_panel(Panel):
         row = layout.row(align=True)
         row.operator("rm.update", text="更新选中", icon="FILE_REFRESH")
         row.operator("rm.clear_done", text="清空已完成", icon="TRASH")
+        row = layout.row(align=True)
+        row.operator("rm.clear_all", text="清空全部快照", icon="X")
 
         # ---- 渲染设置 ----
         box = layout.box()
@@ -81,23 +85,26 @@ class RM_PT_panel(Panel):
             row2.progress(factor=min(done / total, 1.0))
             row2.label(text=f"{done}/{scene.rm_render_total}")
             box.label(text=f"正在渲染：{scene.rm_render_current or '…'}", icon="SORTTIME")
-            # 当前张实时统计：采样进度条 / 已用时间 / 预计剩余
+            # 当前张实时统计：整体进度条 / 采样（含块进度）/ 已用时间 / 剩余
             if scene.rm_render_samples_total:
+                sample_text = f"采样 {scene.rm_render_samples or '—'}"
+                # 大图分块渲染时显示块进度，避免"采样到头但还有块在渲染"的误解
+                if scene.rm_render_tiles_total > 1:
+                    cur_block = min(
+                        scene.rm_render_tiles_done + 1, scene.rm_render_tiles_total
+                    )
+                    sample_text += f" · 块 {cur_block}/{scene.rm_render_tiles_total}"
                 srow = box.row(align=True)
-                srow.progress(
-                    factor=min(
-                        scene.rm_render_samples_cur / scene.rm_render_samples_total,
-                        1.0,
-                    ),
-                    text=f"采样 {scene.rm_render_samples or '—'}",
-                )
+                srow.progress(factor=min(scene.rm_render_progress, 1.0), text=sample_text)
             else:
-                box.row(align=True).label(
-                    text=f"采样 {scene.rm_render_samples or '—'}", icon="TIME"
-                )
+                box.row(align=True).label(text="采样 —", icon="TIME")
             stat_row = box.row(align=True)
             stat_row.label(text=f"已用 {scene.rm_render_time or '—'}")
-            stat_row.label(text=f"剩余 {scene.rm_render_remaining or '—'}")
+            if scene.rm_render_phase == "finalize":
+                # 全部块渲染完成，正在去噪/合成/保存（无采样统计，剩余时间不可用）
+                stat_row.label(text="收尾中…", icon="TIME")
+            else:
+                stat_row.label(text=f"剩余 {scene.rm_render_remaining or '—'}")
         else:
             row = box.row(align=True)
             row.operator("rm.render_selected", text="渲染选中", icon="RESTRICT_RENDER_OFF")
@@ -127,7 +134,6 @@ class RM_PT_panel(Panel):
                 box.label(text="快照数据损坏", icon="ERROR")
         if scene.rm_last_message:
             box.label(text=scene.rm_last_message, icon="INFO")
-        box.label(text=f"共 {len(scene.rm_shots)} 个快照", icon="INFO")
 
 
 UI_CLASSES = (

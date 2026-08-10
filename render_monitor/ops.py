@@ -78,6 +78,9 @@ def _update_ui_from_progress(payload):
     current = ""
     samples = time_str = remaining_str = ""
     samples_cur = samples_total = 0
+    tiles_done = tiles_total = 0
+    progress = 0.0
+    phase = ""
     for s in payload.get("shots", []):
         shot = _shot_by_uid(scene, s["uid"])
         if shot is None:
@@ -90,12 +93,16 @@ def _update_ui_from_progress(payload):
             failed += 1
         elif s["status"] == "RENDERING":
             current = s["name"]
-            # 当前张的实时统计（采样 / 已用 / 剩余），仅用于面板显示
+            # 当前张的实时统计（采样 / 块进度 / 已用 / 剩余），仅用于面板显示
             samples = utils.format_samples(s.get("samples"), s.get("samples_total"))
             time_str = utils.format_duration(s.get("elapsed"))
             remaining_str = utils.format_duration(s.get("remaining"))
             samples_cur = int(s.get("samples") or 0)
             samples_total = int(s.get("samples_total") or 0)
+            tiles_done = int(s.get("tiles_done") or 0)
+            tiles_total = int(s.get("tiles_total") or 1)
+            progress = float(s.get("progress") or 0.0)
+            phase = s.get("phase") or ""
     scene.rm_render_done = done
     scene.rm_render_failed = failed
     scene.rm_render_total = payload.get("total", _active["total"])
@@ -104,6 +111,10 @@ def _update_ui_from_progress(payload):
     scene.rm_render_samples = samples
     scene.rm_render_samples_cur = samples_cur
     scene.rm_render_samples_total = samples_total
+    scene.rm_render_tiles_done = tiles_done
+    scene.rm_render_tiles_total = tiles_total
+    scene.rm_render_progress = progress
+    scene.rm_render_phase = phase
     scene.rm_render_time = time_str
     scene.rm_render_remaining = remaining_str
     _tag_redraw()
@@ -176,6 +187,10 @@ def _finish_session(returncode, cancelled=False):
             scene.rm_render_samples = ""
             scene.rm_render_samples_cur = 0
             scene.rm_render_samples_total = 0
+            scene.rm_render_tiles_done = 0
+            scene.rm_render_tiles_total = 1
+            scene.rm_render_progress = 0.0
+            scene.rm_render_phase = ""
             scene.rm_render_time = ""
             scene.rm_render_remaining = ""
         print(f"[Render Monitor] {msg}")
@@ -530,6 +545,41 @@ class RM_OT_clear_done(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class RM_OT_clear_all(bpy.types.Operator):
+    bl_idname = "rm.clear_all"
+    bl_label = "清空全部快照"
+    bl_description = "删除当前场景的全部快照（含待渲染/已完成/失败），操作前需二次确认"
+
+    @classmethod
+    def poll(cls, context):
+        return not context.window_manager.rm_busy
+
+    def invoke(self, context, event):
+        scene = context.scene
+        if not scene.rm_shots:
+            self.report({"WARNING"}, "当前场景没有快照")
+            return {"CANCELLED"}
+        # invoke_confirm：弹出确认框，点击「确定」后才执行 execute
+        return context.window_manager.invoke_confirm(self, event)
+
+    def draw(self, context):
+        scene = context.scene
+        self.layout.label(
+            text=f"将删除场景「{scene.name}」的全部 {len(scene.rm_shots)} 个快照",
+            icon="ERROR",
+        )
+        self.layout.label(text="此操作不可撤销，渲染状态也会一并清除。")
+
+    def execute(self, context):
+        scene = context.scene
+        total = len(scene.rm_shots)
+        scene.rm_shots.clear()
+        scene.rm_shots_active = 0
+        scene.rm_last_message = f"已清空场景「{scene.name}」的全部 {total} 个快照"
+        self.report({"INFO"}, f"已清空 {total} 个快照")
+        return {"FINISHED"}
+
+
 # ---------------------------------------------------------------------------
 # 渲染
 # ---------------------------------------------------------------------------
@@ -719,6 +769,7 @@ OPERATOR_CLASSES = (
     RM_OT_move_up,
     RM_OT_move_down,
     RM_OT_clear_done,
+    RM_OT_clear_all,
     RM_OT_render_selected,
     RM_OT_render_all,
     RM_OT_stop_render,
