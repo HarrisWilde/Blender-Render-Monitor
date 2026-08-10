@@ -97,15 +97,7 @@ class RM_PT_panel(Panel):
                 )
             stat_row = box.row(align=True)
             stat_row.label(text=f"已用 {scene.rm_render_time or '—'}")
-            if (
-                scene.rm_render_samples_total
-                and scene.rm_render_samples_cur >= scene.rm_render_samples_total
-            ):
-                # 采样已完成：剩余时间为去噪/合成/保存等收尾阶段，Cycles
-                # 不再给出可靠估计，显示「收尾中」更准确。
-                stat_row.label(text="收尾中…", icon="TIME")
-            else:
-                stat_row.label(text=f"剩余 {scene.rm_render_remaining or '—'}")
+            stat_row.label(text=f"剩余 {scene.rm_render_remaining or '—'}")
         else:
             row = box.row(align=True)
             row.operator("rm.render_selected", text="渲染选中", icon="RESTRICT_RENDER_OFF")
