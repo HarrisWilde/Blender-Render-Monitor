@@ -215,6 +215,21 @@ class TestRmJob(unittest.TestCase):
         self.rm_job._on_render_stats("Time: 00:01.00 (Saving: 00:00.11)")
         self.assertAlmostEqual(entry["elapsed"], 1.00, places=2)
 
+    def test_render_stats_finalize_remaining_ignored(self):
+        # 收尾阶段（Finished / 采样计数重置为 0）的 Remaining 异常偏大，
+        # 只接受采样进行中（samples > 0）的估计值
+        entry, _ = self._stats_entry()
+        self.rm_job._on_render_stats(
+            "Remaining: 00:00.37 | Mem: 35M | Sample 432/512"
+        )
+        self.assertAlmostEqual(entry["remaining"], 0.37, places=2)
+        # 无 Sample 的 Finished stats 携带异常 Remaining → 忽略
+        self.rm_job._on_render_stats("Remaining: 00:14.04 | Mem: 35M | Finished")
+        self.assertAlmostEqual(entry["remaining"], 0.37, places=2)
+        # samples=0 的收尾重置 stats 携带异常 Remaining → 忽略
+        self.rm_job._on_render_stats("Remaining: 01:05.00 | Mem: 35M | Sample 0/512")
+        self.assertAlmostEqual(entry["remaining"], 0.37, places=2)
+
     def test_render_stats_init_strings_no_crash(self):
         # 初始化阶段的 stats 没有 Sample/Time 信息，不应崩溃也不应写坏数据
         entry, progress = self._stats_entry()

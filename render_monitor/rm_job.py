@@ -91,7 +91,10 @@ def _on_render_stats(stats_str):
         has_time = "time" in parsed
         if has_time:  # 帧完成时的精确已用时间
             entry["elapsed"] = parsed["time"]
-        if "remaining" in parsed:
+        # 仅接受采样进行中（samples > 0）的剩余时间估计。实测 Cycles 在
+        # 收尾阶段（Finished / 采样计数重置为 0）发出的 Remaining 异常偏大
+        # （如实际渲染 3 秒却报剩余 14 秒），必须忽略。
+        if "remaining" in parsed and parsed.get("samples", 0) > 0:
             entry["remaining"] = parsed["remaining"]
         now = time.monotonic()
         if _stats["start"] is not None and now - _stats["last_write"] >= 0.5:
