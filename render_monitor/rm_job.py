@@ -91,13 +91,16 @@ def _on_render_stats(stats_str):
             entry["tiles_done"] = parsed["tiles_done"]
             entry["tiles_total"] = parsed["tiles_total"]
         # 整体进度：Blender 状态栏进度条的数值 = Cycles 引擎报告的整体渲染
-        # 完成度 =（已完成块数 × 每块采样 + 当前块采样）/（总块数 × 每块采样），
-        # 平滑推进；单块渲染时退化为采样进度。取历史最大值防块切换回退。
+        # 完成度 =（已完成块数 × 每块采样 + 当前块采样）/（总块数 × 每块采样）。
+        # 注意：块完成瞬间 stats 的 Sample 是上一块的残留满值（Rendered X/Y
+        # 已 +1 而 Sample 仍 = total），此时更新会重复计算导致进度条跳变
+        # （如 25% 直接跳 50%），因此只在采样未满（cur < total）时更新，
+        # 并用历史最大值防回退。单块渲染退化为采样进度。
         total = entry.get("samples_total") or 0
         cur = entry.get("samples") or 0
         tdone = entry.get("tiles_done") or 0
         ttotal = entry.get("tiles_total") or 1
-        if total > 0:
+        if total > 0 and cur < total:
             if ttotal > 1:
                 prog = (tdone + cur / total) / ttotal
             else:

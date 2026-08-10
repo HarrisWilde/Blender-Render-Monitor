@@ -239,27 +239,31 @@ class TestRmJob(unittest.TestCase):
         self.assertNotIn("samples", payload["shots"][0])
 
     def test_tile_switch_updates_samples_and_progress(self):
-        # 大图分块渲染：进度条 = Blender 引擎整体进度（已完块+当前块采样综合），
-        # 平滑推进；块切换时采样重置但进度不回退
+        # 大图分块渲染：进度条 = 引擎整体进度，只在采样未满时更新；
+        # 块完成残留满值不重复计算，避免 25% → 50% 的跳变
         entry, _ = self._stats_entry()
+        # 块 1 采样推进（非满）：进度 =（0 + 80/128）/ 4
+        self.rm_job._on_render_stats(
+            "Remaining: 00:06.41 | Mem: 268M | Rendered 0/4 Tiles, Sample 80/128"
+        )
+        self.assertAlmostEqual(entry["progress"], (0 + 80 / 128) / 4, places=3)
+        # 块 1 采样完成 + 块数 +1 的残留满值：均不更新进度（不跳变）
         self.rm_job._on_render_stats(
             "Remaining: 00:15.41 | Mem: 306M | Rendered 0/4 Tiles, Sample 128/128"
         )
-        self.assertEqual(entry["samples"], 128)
-        self.assertEqual(entry["tiles_done"], 0)
-        self.assertEqual(entry["tiles_total"], 4)
-        self.assertAlmostEqual(entry["progress"], (0 + 128 / 128) / 4, places=3)  # 0.25
-        # 块切换：采样重置为 1，进度 =（1 + 1/128）/ 4，不回退
+        self.rm_job._on_render_stats(
+            "Remaining: 00:15.41 | Mem: 306M | Rendered 1/4 Tiles, Sample 128/128"
+        )
+        self.assertAlmostEqual(entry["progress"], (0 + 80 / 128) / 4, places=3)
+        # 块 2 开始采样：进度 =（1 + 1/128）/ 4，从 0.25 附近平滑上升
         self.rm_job._on_render_stats(
             "Remaining: 00:15.34 | Mem: 268M | Rendered 1/4 Tiles, Sample 1/128"
         )
-        self.assertEqual(entry["samples"], 1)
         self.assertAlmostEqual(entry["progress"], (1 + 1 / 128) / 4, places=3)
-        # 同一块内采样推进，进度继续上升
+        # 同一块内采样推进
         self.rm_job._on_render_stats(
             "Remaining: 00:06.41 | Mem: 268M | Rendered 1/4 Tiles, Sample 80/128"
         )
-        self.assertEqual(entry["samples"], 80)
         self.assertAlmostEqual(entry["progress"], (1 + 80 / 128) / 4, places=3)
 
     def test_finalize_phase_detected(self):
