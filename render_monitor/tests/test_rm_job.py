@@ -1,0 +1,240 @@
+"""Render Monitor 子进程渲染脚本单元测试（mock bpy，不依赖真实 Blender）。
+
+验证 rm_job.py 的核心行为：
+1. 参数解析（缺少 '--' / 参数不足 → 非 0 退出）
+2. 逐个应用快照并渲染；单张失败不中断，进度 JSON 正确记录 DONE/FAILED
+3. 渲染未写盘时标记失败
+4. 最终进度文件 state=done
+
+运行：python -m unittest render_monitor.tests.test_rm_job
+"""
+
+from __future__ import annotations
+
+import importlib
+import json
+import os
+import sys
+import tempfile
+import types
+import unittest
+
+from .test_core import MockData, MockObject, MockNamedCollection, MockScene, Vector  # noqa: F401
+
+
+class TestRmJob(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # 注入 mock 模块（复用 test_core 的基建）
+        math = types.ModuleType("mathutils")
+        math.Vector = Vector
+        math.Matrix = __import__("render_monitor.tests.test_core", fromlist=["Matrix"]).Matrix
+        sys.modules["mathutils"] = math
+
+        bpy_mod = types.ModuleType("bpy")
+        data = MockData()
+        data.scenes = MockNamedCollection("name")
+        bpy_mod.data = data
+        bpy_mod.context = types.SimpleNamespace()
+        bpy_mod.ops = types.SimpleNamespace(render=types.SimpleNamespace(render=None))
+        # render_stats handler 注册目标（rm_job._main 会 append）
+        bpy_mod.app = types.SimpleNamespace(
+            handlers=types.SimpleNamespace(render_stats=[])
+        )
+        sys.modules["bpy"] = bpy_mod
+
+        cls.bpy_mod = bpy_mod
+        cls.rm_job = importlib.import_module("render_monitor.rm_job")
+        # core 在 mock 环境下加载
+        cls.core = importlib.import_module("render_monitor.core")
+        importlib.reload(cls.core)
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="rm_job_test_")
+        self.addCleanup(self._cleanup_tmp)
+        # 重建 scene 与快照
+        self.scene = MockScene("Scene")
+        self.bpy_mod.data.scenes.add(self.scene)
+        self.bpy_mod.context.scene = self.scene
+        self.rendered_paths = []
+        self.render_error = None
+
+        def fake_render(*args, **kwargs):
+            if self.render_error:
+                raise self.render_error
+            # 模拟渲染：在 scene.render.filepath 处生成文件
+            path = self.scene.render.filepath
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(b"fake-image")
+            self.rendered_paths.append(path)
+
+        self.bpy_mod.ops.render.render = fake_render
+
+    def _cleanup_tmp(self):
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _make_snapshot(self, uid, name, frame=10):
+        obj = MockObject(f"{name}_Obj")
+        return {
+            "uid": uid,
+            "name": name,
+            "data": {"frame_current": frame, "objects": [{
+                "name": obj.name, "type": obj.type, "hide_viewport": False,
+                "hide_render": False, "hide_select": False, "parent": None,
+                "matrix_local": [list(r) for r in obj.matrix_local],
+            }], "collections": [], "view_layers": [], "world": None,
+                     "camera": None, "render": {"props": []}},
+        }
+
+    def _run(self, snapshots, extra_args=(), template="{name}_{frame:04d}"):
+        snap_path = os.path.join(self.tmp, "snapshots.json")
+        with open(snap_path, "w", encoding="utf-8") as f:
+            json.dump(snapshots, f, ensure_ascii=False)
+        progress = os.path.join(self.tmp, "progress.json")
+        outdir = os.path.join(self.tmp, "out")
+        old_argv = sys.argv
+        sys.argv = ["blender", "-b", "x.blend", "-P", "rm_job.py", "--",
+                    "Scene", snap_path, outdir, template, "1",
+                    progress] + list(extra_args)
+        try:
+            code = self.rm_job._main()
+        finally:
+            sys.argv = old_argv
+        return code, progress
+
+    def test_missing_separator(self):
+        old_argv = sys.argv
+        sys.argv = ["blender", "-b"]
+        try:
+            self.assertEqual(self.rm_job._main(), 1)
+        finally:
+            sys.argv = old_argv
+
+    def test_too_few_args(self):
+        old_argv = sys.argv
+        sys.argv = ["blender", "-b", "--", "only-one"]
+        try:
+            self.assertEqual(self.rm_job._main(), 1)
+        finally:
+            sys.argv = old_argv
+
+    def test_all_success(self):
+        snaps = [self._make_snapshot("a" * 32, "shotA"), self._make_snapshot("b" * 32, "shotB")]
+        code, progress = self._run(snaps)
+        self.assertEqual(code, 0)
+        with open(progress, encoding="utf-8") as f:
+            payload = json.load(f)
+        self.assertEqual(payload["state"], "done")
+        self.assertEqual(payload["total"], 2)
+        statuses = [s["status"] for s in payload["shots"]]
+        self.assertEqual(statuses, ["DONE", "DONE"])
+        self.assertTrue(all(os.path.exists(s["path"]) for s in payload["shots"]))
+        # 渲染了两张
+        self.assertEqual(len(self.rendered_paths), 2)
+
+    def test_index_in_filename(self):
+        # {index} = 列表顺序（从 1 开始），输出文件名按顺序编号
+        snaps = [self._make_snapshot("a" * 32, "shotA"), self._make_snapshot("b" * 32, "shotB")]
+        code, progress = self._run(snaps, template="{name}_{index}")
+        self.assertEqual(code, 0)
+        with open(progress, encoding="utf-8") as f:
+            payload = json.load(f)
+        paths = [s["path"] for s in payload["shots"]]
+        self.assertTrue(paths[0].endswith("shotA_1.png"), paths[0])
+        self.assertTrue(paths[1].endswith("shotB_2.png"), paths[1])
+
+    def test_one_failure_continues(self):
+        snaps = [self._make_snapshot("a" * 32, "shotA"), self._make_snapshot("b" * 32, "shotB")]
+        # 仅第一张渲染失败，第二张应正常渲染
+        real_render = self.bpy_mod.ops.render.render
+        calls = {"n": 0}
+
+        def fail_first(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("mock render boom")
+            return real_render(*args, **kwargs)
+
+        self.bpy_mod.ops.render.render = fail_first
+        fail_uid = snaps[0]["uid"]
+        code, progress = self._run(snaps)
+        # 单张失败被捕获，脚本正常结束
+        self.assertEqual(code, 0)
+        with open(progress, encoding="utf-8") as f:
+            payload = json.load(f)
+        statuses = {s["uid"]: s for s in payload["shots"]}
+        self.assertEqual(statuses[fail_uid]["status"], "FAILED")
+        self.assertIn("mock render boom", statuses[fail_uid]["error"])
+        self.assertEqual(statuses[snaps[1]["uid"]]["status"], "DONE")
+
+    def test_no_file_written_marks_failed(self):
+        snaps = [self._make_snapshot("a" * 32, "shotA")]
+
+        def fake_render_no_write(*args, **kwargs):
+            pass  # 不写文件 → 校验失败
+
+        self.bpy_mod.ops.render.render = fake_render_no_write
+        code, progress = self._run(snaps)
+        self.assertEqual(code, 0)
+        with open(progress, encoding="utf-8") as f:
+            payload = json.load(f)
+        self.assertEqual(payload["shots"][0]["status"], "FAILED")
+        self.assertIn("未生成输出文件", payload["shots"][0]["error"])
+
+    def _stats_entry(self):
+        entry = {"uid": "x" * 32, "name": "shotX", "status": "RENDERING",
+                 "path": "", "error": ""}
+        progress = os.path.join(self.tmp, "progress_stats.json")
+        self.rm_job._stats.update(
+            entry=entry, start=1.0, last_write=0.0,
+            progress_path=progress, total=1, shots=[entry],
+        )
+        return entry, progress
+
+    def test_render_stats_updates_entry_and_progress(self):
+        # render_stats handler：解析采样/剩余时间，并写入进度 JSON
+        entry, progress = self._stats_entry()
+        self.rm_job._on_render_stats(
+            "Remaining: 00:01.33 | Mem: 6M | Sample 96/256"
+        )
+        self.assertEqual(entry["samples"], 96)
+        self.assertEqual(entry["samples_total"], 256)
+        self.assertAlmostEqual(entry["remaining"], 1.33, places=2)
+        self.assertGreater(entry["elapsed"], 0.0)  # 已用时间按 start 推算
+        with open(progress, encoding="utf-8") as f:
+            payload = json.load(f)
+        self.assertEqual(payload["shots"][0]["samples"], 96)
+        self.assertAlmostEqual(payload["shots"][0]["remaining"], 1.33, places=2)
+
+    def test_render_stats_frame_done_time(self):
+        # 帧完成 stats 的精确已用时间应覆盖 elapsed
+        entry, _ = self._stats_entry()
+        self.rm_job._on_render_stats("Time: 00:01.00 (Saving: 00:00.11)")
+        self.assertAlmostEqual(entry["elapsed"], 1.00, places=2)
+
+    def test_render_stats_init_strings_no_crash(self):
+        # 初始化阶段的 stats 没有 Sample/Time 信息，不应崩溃也不应写坏数据
+        entry, progress = self._stats_entry()
+        self.rm_job._on_render_stats("Mem: 1M | Updating Objects")
+        with open(progress, encoding="utf-8") as f:
+            payload = json.load(f)
+        self.assertNotIn("samples", payload["shots"][0])
+
+    def test_render_stats_sample_does_not_go_backwards(self):
+        # Cycles 渲染末尾会把采样计数重置为 0，进度不应回退
+        entry, progress = self._stats_entry()
+        self.rm_job._on_render_stats(
+            "Remaining: 00:03.60 | Mem: 13M | Sample 80/400"
+        )
+        self.assertEqual(entry["samples"], 80)
+        self.rm_job._on_render_stats(
+            "Remaining: 00:05.69 | Mem: 13M | Sample 0/400"
+        )
+        self.assertEqual(entry["samples"], 80)  # 保持最大值，不回退
+
+
+if __name__ == "__main__":
+    unittest.main()
