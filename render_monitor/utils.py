@@ -136,3 +136,27 @@ def format_samples(samples, samples_total) -> str:
         return f"{int(samples)}/{int(samples_total)}"
     except (TypeError, ValueError):
         return ""
+
+
+def compute_tile_weights(width: int, height: int, tile_size: int) -> list:
+    """按 Cycles 行优先（从上到下、从左到右）分块，计算每块像素占总像素的比例。
+
+    用于按真实像素工作量重建渲染整体进度（引擎不直接报告该值）：
+    边缘块尺寸小于 tile_size，像素占比随之变小。返回权重列表（和为 1），
+    顺序与 Cycles 的 Rendered X/Y Tiles 完成顺序一致。
+    """
+    tile = max(int(tile_size or 0), 1)
+    w = max(int(width or 0), 1)
+    h = max(int(height or 0), 1)
+    total_px = w * h
+    weights = []
+    y = 0
+    while y < h:
+        th = min(tile, h - y)
+        x = 0
+        while x < w:
+            tw = min(tile, w - x)
+            weights.append((tw * th) / total_px)
+            x += tw
+        y += th
+    return weights

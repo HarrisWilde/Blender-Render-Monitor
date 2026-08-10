@@ -52,6 +52,11 @@ class TestRmJob(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="rm_job_test_")
         self.addCleanup(self._cleanup_tmp)
+        # 重置模块级渲染状态，避免用例间泄漏
+        self.rm_job._stats.update(
+            entry=None, start=None, last_write=0.0, progress_path="",
+            total=0, shots=[], tile_weights=[],
+        )
         # 重建 scene 与快照
         self.scene = MockScene("Scene")
         self.bpy_mod.data.scenes.add(self.scene)
@@ -265,6 +270,38 @@ class TestRmJob(unittest.TestCase):
             "Remaining: 00:06.41 | Mem: 268M | Rendered 1/4 Tiles, Sample 80/128"
         )
         self.assertAlmostEqual(entry["progress"], (1 + 80 / 128) / 4, places=3)
+
+    def test_progress_uses_tile_pixel_weights(self):
+        # 块大小不均时，进度按已完成像素占比计算（引擎真实进度）
+        entry, _ = self._stats_entry()
+        weights = self.rm_job.utils.compute_tile_weights(1920, 1080, 960)  # 2x2 不均匀
+        self.assertEqual(len(weights), 4)
+        self.rm_job._stats.update(tile_weights=weights)
+        # 块 1 采样 80/128：进度 = w0 × 80/128（而非等权 80/(128*4)）
+        self.rm_job._on_render_stats(
+            "Remaining: 00:15.41 | Mem: 306M | Rendered 0/4 Tiles, Sample 80/128"
+        )
+        self.assertAlmostEqual(
+            entry["progress"], weights[0] * 80 / 128, places=3
+        )
+        # 残留满值不更新 → 块 2 开始：w0 + w1 × 1/128
+        self.rm_job._on_render_stats(
+            "Remaining: 00:15.41 | Mem: 306M | Rendered 1/4 Tiles, Sample 128/128"
+        )
+        self.rm_job._on_render_stats(
+            "Remaining: 00:15.34 | Mem: 268M | Rendered 1/4 Tiles, Sample 1/128"
+        )
+        self.assertAlmostEqual(
+            entry["progress"], weights[0] + weights[1] * 1 / 128, places=3
+        )
+
+    def test_progress_falls_back_to_equal_weight(self):
+        # 权重缺失（如引擎布局与计算不符）时回退等权
+        entry, _ = self._stats_entry()
+        self.rm_job._on_render_stats(
+            "Remaining: 00:15.34 | Mem: 268M | Rendered 1/4 Tiles, Sample 1/128"
+        )
+        self.assertAlmostEqual(entry["progress"], (1 + 1 / 128) / 4, places=3)
 
     def test_finalize_phase_detected(self):
         # 收尾阶段（去噪/合成/保存）被标记，进度置满

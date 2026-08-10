@@ -11,6 +11,7 @@ import unittest
 from ..utils import (
     DEFAULT_FILE_TEMPLATE,
     build_output_path,
+    compute_tile_weights,
     format_duration,
     format_filename,
     format_samples,
@@ -151,6 +152,32 @@ class TestFormatDurationAndSamples(unittest.TestCase):
         self.assertEqual(format_samples(None, None), "")
         self.assertEqual(format_samples(0, 0), "0/0")
         self.assertEqual(format_samples("x", 1), "")
+
+
+class TestComputeTileWeights(unittest.TestCase):
+    def test_uniform_grid(self):
+        # 1920x1080, tile 960 → 2x2 均匀网格，每块权重 = 像素占比
+        weights = compute_tile_weights(1920, 1080, 960)
+        self.assertEqual(len(weights), 4)
+        self.assertAlmostEqual(sum(weights), 1.0, places=6)
+        total = 1920 * 1080
+        self.assertAlmostEqual(weights[0], 960 * 960 / total, places=6)
+        self.assertAlmostEqual(weights[3], 960 * 120 / total, places=6)
+
+    def test_single_tile(self):
+        self.assertEqual(compute_tile_weights(800, 600, 2048), [1.0])
+
+    def test_row_major_order(self):
+        # 行优先顺序与 Cycles 的 Rendered X/Y Tiles 一致：1200x800 tile 500 → 3x2
+        weights = compute_tile_weights(1200, 800, 500)
+        self.assertEqual(len(weights), 6)
+        total = 1200 * 800
+        self.assertAlmostEqual(weights[0], 500 * 500 / total, places=6)
+        self.assertAlmostEqual(weights[2], 200 * 500 / total, places=6)  # 第一行最右小块
+        self.assertAlmostEqual(weights[5], 200 * 300 / total, places=6)  # 最小块
+
+    def test_bad_inputs(self):
+        self.assertEqual(compute_tile_weights(0, 0, 0), [1.0])
 
 
 if __name__ == "__main__":

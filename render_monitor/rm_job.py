@@ -68,6 +68,7 @@ _stats = {
     "progress_path": "",
     "total": 0,
     "shots": [],
+    "tile_weights": [],  # 当前张各分块的像素权重（行优先，和为 1）
 }
 
 
@@ -90,18 +91,23 @@ def _on_render_stats(stats_str):
         if "tiles_done" in parsed:
             entry["tiles_done"] = parsed["tiles_done"]
             entry["tiles_total"] = parsed["tiles_total"]
-        # 整体进度：Blender 状态栏进度条的数值 = Cycles 引擎报告的整体渲染
-        # 完成度 =（已完成块数 × 每块采样 + 当前块采样）/（总块数 × 每块采样）。
-        # 注意：块完成瞬间 stats 的 Sample 是上一块的残留满值（Rendered X/Y
-        # 已 +1 而 Sample 仍 = total），此时更新会重复计算导致进度条跳变
-        # （如 25% 直接跳 50%），因此只在采样未满（cur < total）时更新，
-        # 并用历史最大值防回退。单块渲染退化为采样进度。
+        # 整体进度：按「已完成像素占比」重建引擎真实进度 ——
+        # 已完成块的权重和 + 当前块权重 × 采样比例（tile_weights 由分辨率与
+        # tile_size 在渲染前算好）。块完成瞬间 stats 的 Sample 是上一块的残留
+        # 满值（Rendered X/Y 已 +1 而 Sample 仍 = total），此时更新会重复计算
+        # 导致进度条跳变，因此只在采样未满（cur < total）时更新，并取最大值。
+        # 权重缺失或块数与权重不符时回退等权（tdone + cur/total）/ ttotal。
         total = entry.get("samples_total") or 0
         cur = entry.get("samples") or 0
         tdone = entry.get("tiles_done") or 0
         ttotal = entry.get("tiles_total") or 1
+        weights = _stats.get("tile_weights") or []
         if total > 0 and cur < total:
-            if ttotal > 1:
+            if len(weights) == ttotal and ttotal > 1:
+                done_w = sum(weights[:tdone])
+                cur_w = weights[tdone] if tdone < len(weights) else 0.0
+                prog = done_w + cur_w * (cur / total)
+            elif ttotal > 1:
                 prog = (tdone + cur / total) / ttotal
             else:
                 prog = cur / total
@@ -245,6 +251,19 @@ def _main():
                 samples=0, samples_total=0, elapsed=0.0, remaining=None,
                 tiles_done=0, tiles_total=1, progress=0.0, phase="",
             )
+            # 按当前分辨率与 Cycles 平铺尺寸计算各分块像素权重，
+            # 用于按真实像素占比重建整体进度。
+            try:
+                tile_size = getattr(scene.cycles, "tile_size", 2048) or 2048
+            except AttributeError:
+                tile_size = 2048
+            res_w = int(
+                scene.render.resolution_x * scene.render.resolution_percentage / 100
+            )
+            res_h = int(
+                scene.render.resolution_y * scene.render.resolution_percentage / 100
+            )
+            tile_weights = utils.compute_tile_weights(res_w, res_h, tile_size)
             _stats.update(
                 entry=entry,
                 start=time.monotonic(),
@@ -252,6 +271,7 @@ def _main():
                 progress_path=progress_path,
                 total=len(snapshots),
                 shots=shots,
+                tile_weights=tile_weights,
             )
             _write_progress(progress_path, "running", len(snapshots), shots)
             bpy.ops.render.render(scene=scene.name, write_still=True, use_viewport=False)
