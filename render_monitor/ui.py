@@ -21,6 +21,33 @@ class RM_UL_shots(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname):
         if self.layout_type in {"DEFAULT", "COMPACT"}:
             row = layout.row(align=True)
+            # 序号 = 快照在列表中的原始顺序（与文件命名模板 {index} 对应），
+            # 不是过滤后的重排号；只作显示，不修改快照名。
+            # 注意：UIList 的 data 参数是 template_list 传入的 dataptr（这里是
+            # scene），快照集合要取 data.rm_shots。draw_item 每帧渲染，必须
+            # 健壮：异常时兜底显示 1，绝不拖垮列表显示。
+            index = 1
+            try:
+                for i, s in enumerate(data.rm_shots):
+                    if s.uid == item.uid:
+                        index = i + 1
+                        break
+            except (AttributeError, TypeError):
+                pass
+            # 序号列：固定紧凑宽度 + 右对齐。label 默认按文本取宽（1 位和
+            # 10+ 位宽度不同），会让后面的勾选/名称列横向错位；固定宽度后
+            # 所有行（含已完成/待渲染）在纵向上严格对齐。
+            num = row.column(align=True)
+            num.ui_units_x = 1.0
+            num.alignment = "RIGHT"
+            num.label(text=str(index))
+            # 渲染勾选：图标按钮（CHECKBOX_HLT=勾选 / CHECKBOX_DEHLT=未勾选），
+            # 点击切换。不用 UIList 行内布尔 prop（其小方框在部分主题下不明显）。
+            row.operator(
+                "rm.toggle_shot", text="",
+                icon="CHECKBOX_HLT" if item.selected else "CHECKBOX_DEHLT",
+                emboss=False,
+            ).uid = item.uid
             row.prop(item, "name", text="", emboss=False,
                      icon=_STATUS_ICONS.get(item.status, "TIME"))
             if item.status == "DONE" and item.output_path:
@@ -45,6 +72,11 @@ class RM_PT_panel(Panel):
         # ---- 快照列表（显示所属场景，便于区分多场景下的独立快照）----
         layout.label(text=f"场景：{scene.name}（共 {len(scene.rm_shots)} 个快照）",
                      icon="SCENE_DATA")
+        # 渲染勾选的批量操作：全选 / 全不选 / 反选
+        row = layout.row(align=True)
+        row.operator("rm.select_all", text="全选", icon="CHECKBOX_HLT").action = "ALL"
+        row.operator("rm.select_all", text="全不选", icon="CHECKBOX_DEHLT").action = "NONE"
+        row.operator("rm.select_all", text="反选", icon="ARROW_LEFTRIGHT").action = "INVERT"
         row = layout.row()
         row.template_list("RM_UL_shots", "", scene, "rm_shots", scene, "rm_shots_active")
         col = row.column(align=True)
@@ -69,7 +101,6 @@ class RM_PT_panel(Panel):
         box.prop(scene, "rm_output_dir")
         box.prop(scene, "rm_file_template")
         row = box.row()
-        row.prop(scene, "rm_only_pending")
         row.prop(scene, "rm_use_snapshot_frame")
         row = box.row()
         row.prop(scene, "rm_write_log")
@@ -107,8 +138,11 @@ class RM_PT_panel(Panel):
                 stat_row.label(text=f"剩余 {scene.rm_render_remaining or '—'}")
         else:
             row = box.row(align=True)
-            row.operator("rm.render_selected", text="渲染选中", icon="RESTRICT_RENDER_OFF")
-            row.operator("rm.render_all", text="渲染全部", icon="PLAY")
+            row.operator("rm.render_selected", text="渲染当前", icon="RESTRICT_RENDER_OFF")
+            # 动态显示勾选数量，所见即所得：渲染勾选（勾选数/总数）
+            checked = sum(1 for s in scene.rm_shots if s.selected)
+            total = len(scene.rm_shots)
+            row.operator("rm.render_all", text=f"渲染勾选（{checked}/{total}）", icon="PLAY")
         row = box.row()
         row.operator("rm.diagnose", text="环境诊断", icon="INFO")
 

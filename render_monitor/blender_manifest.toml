@@ -1,0 +1,30 @@
+schema_version = "1.0.0"
+
+# Render Monitor 渲染监视器 - 扩展清单（Blender 4.2+ 扩展系统）。
+# 与 bl_info 保持同步：id 与模块名/文件夹名一致，version 与 bl_info["version"] 一致。
+id = "render_monitor"
+version = "1.4.4"
+name = "Render Monitor 渲染监视器"
+tagline = "批量渲染场景快照，UI 不冻结，类似 KeyShot 的 Render Monitor"
+maintainer = "Render Monitor Contributors"
+type = "add-on"
+
+# 可选：文档/支持链接
+# website = ""
+
+# 可选：标签（由 Blender 官方扩展平台定义，见
+# https://docs.blender.org/manual/en/dev/advanced/extensions/tags.html）
+tags = ["Render", "Animation"]
+
+blender_version_min = "4.2.0"
+# 可选：不再支持的 Blender 版本
+# blender_version_max = ""
+
+# 许可证（SPDX 标识，见 https://spdx.org/licenses/）
+license = [
+  "SPDX:GPL-2.0-or-later",
+]
+# 可选：部分许可证要求版权声明
+# copyright = [
+#   "2002-2024 Render Monitor Contributors",
+# ]

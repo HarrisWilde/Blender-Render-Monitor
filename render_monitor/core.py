@@ -16,7 +16,10 @@ except ImportError:  # 非 Blender 环境（如单元测试）下允许导入模
 
 # 快照格式版本
 # v2: 新增 view_layers（集合 exclude 开关）与 active_view_layer 记录
-SNAPSHOT_VERSION = 2
+# v3: 对象变换改用直接数据（location/rotation/scale + delta），不再依赖
+#     matrix_local（依赖图评估缓存，exclude/隐藏集合中的对象读取会得到
+#     未计算的默认值，导致快照记录错误、应用后位置旋转归零）
+SNAPSHOT_VERSION = 3
 
 # 渲染设置捕获/恢复的属性路径（相对 scene）。
 # 恢复时逐个 try/except，属性不存在或引擎不支持时自动跳过（容错）。
@@ -229,6 +232,39 @@ def apply_render(scene, render_state):
 # 集合与对象
 # ---------------------------------------------------------------------------
 
+def _capture_rotation(obj):
+    """按 rotation_mode 记录旋转（Euler / Quaternion / AxisAngle），容错。"""
+    try:
+        mode = obj.rotation_mode
+    except AttributeError:
+        return [0.0, 0.0, 0.0]
+    try:
+        if mode == "QUATERNION":
+            return list(obj.rotation_quaternion)
+        if mode == "AXIS_ANGLE":
+            return list(obj.rotation_axis_angle)
+    except AttributeError:
+        pass
+    try:
+        return list(obj.rotation_euler)
+    except AttributeError:
+        return [0.0, 0.0, 0.0]
+
+
+def _apply_rotation(obj, o):
+    """按快照记录的 rotation_mode 恢复旋转（Euler / Quaternion / AxisAngle）。"""
+    mode = o.get("rotation_mode", "XYZ")
+    rot = o.get("rotation")
+    if rot is None:
+        return
+    if mode == "QUATERNION":
+        obj.rotation_quaternion = Vector(rot)
+    elif mode == "AXIS_ANGLE":
+        obj.rotation_axis_angle = Vector(rot)
+    else:
+        obj.rotation_euler = Vector(rot)
+
+
 def _capture_object(obj):
     st = {
         "name": obj.name,
@@ -237,8 +273,26 @@ def _capture_object(obj):
         "hide_render": obj.hide_render,
         "hide_select": obj.hide_select,
         "parent": obj.parent.name if obj.parent else None,
-        "matrix_local": [list(row) for row in obj.matrix_local],
+        # 变换用对象直接数据（location/rotation/scale）而非 matrix_local：
+        # matrix_local 是依赖图评估的缓存结果，对象位于 exclude/隐藏集合时
+        # 依赖图不评估它，读取会返回未计算的默认值（单位矩阵），导致快照
+        # 记录错误、应用后位置/旋转归零。
+        "rotation_mode": obj.rotation_mode,
+        "location": list(obj.location),
+        "rotation": _capture_rotation(obj),
+        "scale": list(obj.scale),
     }
+    # delta 变换（存在且非默认才记录，减小快照体积；兼容带 delta 的摆位）
+    try:
+        dl = list(obj.delta_location)
+        dr = list(obj.delta_rotation_euler)
+        ds = list(obj.delta_scale)
+        if dl != [0.0, 0.0, 0.0] or dr != [0.0, 0.0, 0.0] or ds != [1.0, 1.0, 1.0]:
+            st["delta_location"] = dl
+            st["delta_rotation_euler"] = dr
+            st["delta_scale"] = ds
+    except (AttributeError, TypeError):
+        pass
     # 逐对象渲染可见性（存在才记录，容错）
     for attr in (
         "visible_camera",
@@ -415,10 +469,38 @@ def apply_scene_state(scene, state):
                     setattr(obj, attr, o[attr])
                 except Exception:
                     pass
-        try:
-            obj.matrix_local = Matrix(o["matrix_local"])
-        except Exception:
-            pass
+        # 变换：快照 v3+ 用对象直接数据（location/rotation/scale + delta），
+        # 不受依赖图评估影响（exclude/隐藏集合中的对象也能正确恢复）；
+        # 旧快照（v1/v2，无这些字段）回退 matrix_local。
+        if "location" in o:
+            try:
+                obj.rotation_mode = o["rotation_mode"]
+            except Exception:
+                pass
+            try:
+                obj.location = Vector(o["location"])
+            except Exception:
+                pass
+            try:
+                _apply_rotation(obj, o)
+            except Exception:
+                pass
+            try:
+                obj.scale = Vector(o["scale"])
+            except Exception:
+                pass
+            if "delta_location" in o:
+                try:
+                    obj.delta_location = Vector(o["delta_location"])
+                    obj.delta_rotation_euler = Vector(o["delta_rotation_euler"])
+                    obj.delta_scale = Vector(o["delta_scale"])
+                except Exception:
+                    pass
+        else:
+            try:
+                obj.matrix_local = Matrix(o["matrix_local"])
+            except Exception:
+                pass
         if "light_data" in o and obj.type == "LIGHT" and obj.data:
             try:
                 obj.data.energy = o["light_data"]["energy"]

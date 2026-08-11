@@ -42,6 +42,36 @@ def _tag_redraw():
                     area.tag_redraw()
 
 
+def _plugin_version_str():
+    """返回插件版本字符串（如 'v1.4.0'）。
+
+    Blender 4.2+ 扩展模式下，模块内的 bl_info 被扩展系统忽略（版本由
+    blender_manifest.toml 生成），因此优先读 manifest；普通 addon 模式
+    再用 bl_info 兜底。
+    """
+    import os
+
+    manifest = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "blender_manifest.toml"
+    )
+    try:
+        import tomllib
+    except ImportError:  # Python < 3.11（Blender 4.2+ 自带 3.11+，正常不会走到）
+        tomllib = None
+    if tomllib is not None:
+        try:
+            with open(manifest, "rb") as f:
+                return "v" + tomllib.load(f)["version"]
+        except (OSError, KeyError, TypeError, ValueError):
+            pass
+    try:
+        from . import bl_info
+
+        return "v" + ".".join(map(str, bl_info["version"]))
+    except Exception:  # noqa: BLE001
+        return "?"
+
+
 # ---------------------------------------------------------------------------
 # 子进程后台渲染
 #
@@ -252,7 +282,7 @@ def _start_subprocess_render(context, uids):
     if wm.rm_busy:
         return False, "已有渲染任务在进行中"
     if not uids:
-        return False, "没有待渲染的快照"
+        return False, "没有勾选的快照（请先在列表中勾选要渲染的，或点「全选」）"
     if not bpy.app.binary_path:
         return False, "无法定位 Blender 可执行文件（bpy.app.binary_path 为空，可能是以 Python 模块方式运行）"
     # 未保存文件：// 相对路径无法解析，必须使用绝对路径输出目录
@@ -265,10 +295,11 @@ def _start_subprocess_render(context, uids):
     snapshots = []
     skipped = 0
     old_snapshots = 0
-    order = 0
-    for s in scene.rm_shots:
+    for i, s in enumerate(scene.rm_shots):
         if s.uid in uids:
-            order += 1  # 列表顺序编号（从 1 开始），用于文件命名 {index} 占位符
+            # {index} = 快照在列表中的原始顺序（从 1 开始），而不是本次渲染队列
+            # 的重新编号：否则「仅渲染未完成」中断后续跑或单张渲染时，编号会从
+            # 1 重新计数，导致文件名错乱/覆盖已渲染文件。
             try:
                 data = json.loads(s.data_json)
             except ValueError:
@@ -279,7 +310,7 @@ def _start_subprocess_render(context, uids):
             snapshots.append({
                 "uid": s.uid,
                 "name": s.name,
-                "index": order,
+                "index": i + 1,
                 "data": data,
             })
     if not snapshots:
@@ -493,6 +524,7 @@ def _move_shot(scene, idx, direction):
         new = scene.rm_shots.add()
         new.uid, new.name, new.data_json = s.uid, s.name, s.data_json
         new.status, new.output_path = s.status, s.output_path
+        new.selected = s.selected
     scene.rm_shots_active = new_idx
     return True
 
@@ -527,6 +559,54 @@ class RM_OT_move_down(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class RM_OT_toggle_shot(bpy.types.Operator):
+    bl_idname = "rm.toggle_shot"
+    bl_label = "切换渲染勾选"
+    bl_description = "勾选/取消勾选该快照（「渲染勾选」只渲染勾选的快照）"
+
+    uid: bpy.props.StringProperty(name="UID", default="")
+
+    @classmethod
+    def poll(cls, context):
+        return not context.window_manager.rm_busy
+
+    def execute(self, context):
+        shot = _shot_by_uid(context.scene, self.uid)
+        if shot is not None:
+            shot.selected = not shot.selected
+        return {"FINISHED"}
+
+
+class RM_OT_select_all(bpy.types.Operator):
+    bl_idname = "rm.select_all"
+    bl_label = "批量设置渲染勾选"
+    bl_description = "全选 / 全不选 / 反选快照的渲染勾选状态（「渲染勾选」只渲染勾选的快照）"
+
+    action: bpy.props.EnumProperty(
+        name="操作",
+        items=[
+            ("ALL", "全选", "勾选全部快照"),
+            ("NONE", "全不选", "取消全部快照的勾选"),
+            ("INVERT", "反选", "反转每个快照的勾选状态"),
+        ],
+        default="ALL",
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return not context.window_manager.rm_busy
+
+    def execute(self, context):
+        for shot in context.scene.rm_shots:
+            if self.action == "ALL":
+                shot.selected = True
+            elif self.action == "NONE":
+                shot.selected = False
+            else:
+                shot.selected = not shot.selected
+        return {"FINISHED"}
+
+
 class RM_OT_clear_done(bpy.types.Operator):
     bl_idname = "rm.clear_done"
     bl_label = "清空已完成"
@@ -548,7 +628,7 @@ class RM_OT_clear_done(bpy.types.Operator):
 class RM_OT_clear_all(bpy.types.Operator):
     bl_idname = "rm.clear_all"
     bl_label = "清空全部快照"
-    bl_description = "删除当前场景的全部快照（含待渲染/已完成/失败），操作前需二次确认"
+    bl_description = "删除当前场景的全部快照"
 
     @classmethod
     def poll(cls, context):
@@ -586,8 +666,8 @@ class RM_OT_clear_all(bpy.types.Operator):
 
 class RM_OT_render_selected(bpy.types.Operator):
     bl_idname = "rm.render_selected"
-    bl_label = "渲染选中快照"
-    bl_description = "后台渲染选中快照到输出目录（渲染在独立进程执行，UI 不冻结，可在面板查看进度）"
+    bl_label = "渲染当前快照"
+    bl_description = "后台渲染列表中高亮（当前选中）的那一个快照到输出目录"
     bl_options = {"REGISTER"}
 
     @classmethod
@@ -624,8 +704,8 @@ class RM_OT_render_selected(bpy.types.Operator):
 
 class RM_OT_render_all(bpy.types.Operator):
     bl_idname = "rm.render_all"
-    bl_label = "批量渲染全部"
-    bl_description = "按列表顺序后台渲染所有快照到输出目录（渲染在独立进程执行，UI 不冻结，可在面板查看进度并随时停止）"
+    bl_label = "渲染所有勾选快照"
+    bl_description = "按列表顺序后台渲染所有已勾选的快照（未勾选的不渲染；已完成/失败/待渲染勾选后都会渲染）"
     bl_options = {"REGISTER"}
 
     @classmethod
@@ -649,11 +729,7 @@ class RM_OT_render_all(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        uids = [
-            s.uid
-            for s in scene.rm_shots
-            if not (scene.rm_only_pending and s.status == "DONE")
-        ]
+        uids = [s.uid for s in scene.rm_shots if s.selected]
         ok, msg = _start_subprocess_render(context, uids)
         if not ok:
             self.report({"ERROR"}, msg)
@@ -696,12 +772,7 @@ class RM_OT_diagnose(bpy.types.Operator):
 
     def invoke(self, context, event):
         lines = []
-        try:
-            from . import bl_info
-
-            lines.append(f"插件版本: v{'.'.join(map(str, bl_info['version']))}")
-        except Exception:  # noqa: BLE001
-            lines.append("插件版本: ?")
+        lines.append(f"插件版本: {_plugin_version_str()}")
         scene = context.scene
         lines.append(f"输出目录: {bpy.path.abspath(scene.rm_output_dir)}")
         lines.append("")
@@ -768,6 +839,8 @@ OPERATOR_CLASSES = (
     RM_OT_delete,
     RM_OT_move_up,
     RM_OT_move_down,
+    RM_OT_toggle_shot,
+    RM_OT_select_all,
     RM_OT_clear_done,
     RM_OT_clear_all,
     RM_OT_render_selected,

@@ -5,9 +5,10 @@
 "快照"，逐个应用并批量渲染到指定路径；渲染结束后自动恢复场景原状，不打扰
 正在进行的其他工作。
 
-安装：使用项目根目录的 render_monitor.zip —— zip 内第一层是 render_monitor/
-文件夹（内含 __init__.py），这是 Blender 多文件（包）插件的标准结构；
-在 Blender 偏好设置 → 插件 中安装该 zip 即可。
+安装：使用项目根目录的 render_monitor.zip —— 该包是标准 Blender 扩展包
+（内含 blender_manifest.toml，zip 内第一层是 render_monitor/ 文件夹）；
+支持 Blender 4.2 及以上。把 zip 直接拖进窗口即可安装/拖入新版即可更新，
+也可在 Preferences → Get Extensions → 右上角下拉菜单 → Install from Disk 中选择。
 """
 
 from __future__ import annotations
@@ -15,10 +16,10 @@ from __future__ import annotations
 bl_info = {
     "name": "Render Monitor 渲染监视器",
     "author": "Render Monitor Contributors",
-    "version": (1, 3, 0),
-    "blender": (5, 2, 0),
+    "version": (1, 4, 4),
+    "blender": (4, 2, 0),
     "location": "3D Viewport > Sidebar (N) > Render Monitor",
-    "description": "把场景状态记录为快照并批量后台渲染（UI 不冻结），类似 KeyShot 的 Render Monitor",
+    "description": "把场景状态记录为快照并批量后台渲染，类似 KeyShot 的 Render Monitor",
     "warning": "",
     "doc_url": "",
     "category": "Render",
@@ -67,11 +68,26 @@ if bpy is not None:
         data_json: StringProperty(name="快照数据", default="{}")
         status: EnumProperty(name="状态", items=_status_items(), default="PENDING")
         output_path: StringProperty(name="输出文件", default="")
+        # 渲染勾选：默认全部勾选，「渲染勾选」只渲染勾选的快照
+        selected: BoolProperty(name="渲染", default=True,
+                               description="勾选后参与「渲染勾选」；用列表上方的全选/全不选/反选批量设置")
 
 
 # ---------------------------------------------------------------------------
 # 场景属性
 # ---------------------------------------------------------------------------
+
+def _dir_path_options():
+    """Blender 4.5+ 新增的相对路径声明选项。
+
+    不带该选项时，DIR_PATH 属性填入 // 前缀会被界面提示
+    「此属性不支持 blend 文件相对路径前缀"//"」（4.5 之前没有这个
+    警告、也没有这个 flag，因此按版本判断以兼容 4.2~4.4）。
+    """
+    if bpy is not None and bpy.app.version >= (4, 5, 0):
+        return {"PATH_SUPPORTS_BLEND_RELATIVE"}
+    return set()
+
 
 def register_scene_props():
     bpy.types.Scene.rm_shots = CollectionProperty(type=RMShot)
@@ -80,6 +96,7 @@ def register_scene_props():
         name="输出目录",
         subtype="DIR_PATH",
         default="//",
+        options=_dir_path_options(),
         description="渲染输出目录，默认输出到当前 .blend 文件所在目录；支持 // 相对路径，未保存的文件请选择绝对路径",
     )
     bpy.types.Scene.rm_write_log = BoolProperty(
@@ -90,12 +107,7 @@ def register_scene_props():
     bpy.types.Scene.rm_file_template = StringProperty(
         name="文件命名模板",
         default="{name} {index}",
-        description="输出文件名模板：{name}（快照名）、{index}（列表顺序，从 1 开始）、{frame}（帧号）",
-    )
-    bpy.types.Scene.rm_only_pending = BoolProperty(
-        name="仅渲染未完成",
-        default=True,
-        description="批量渲染时跳过状态为「已完成」的快照",
+        description="输出文件名模板：{name}（快照名）、{index}（列表序号）、{frame}（帧号）",
     )
     bpy.types.Scene.rm_use_snapshot_frame = BoolProperty(
         name="使用快照帧",
@@ -132,7 +144,6 @@ def unregister_scene_props():
         "rm_shots_active",
         "rm_output_dir",
         "rm_file_template",
-        "rm_only_pending",
         "rm_use_snapshot_frame",
         "rm_write_log",
         "rm_render_done",

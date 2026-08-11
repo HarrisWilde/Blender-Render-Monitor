@@ -72,6 +72,16 @@ class MockObject:
         self.hide_select = False
         self.parent = None
         self.matrix_local = Matrix()
+        # 变换直接数据（模拟真实 Blender 的 location/rotation/scale/delta）
+        self.rotation_mode = "XYZ"
+        self.location = Vector([0.0, 0.0, 0.0])
+        self.rotation_euler = Vector([0.0, 0.0, 0.0])
+        self.rotation_quaternion = Vector([1.0, 0.0, 0.0, 0.0])
+        self.rotation_axis_angle = Vector([0.0, 1.0, 0.0, 0.0])
+        self.scale = Vector([1.0, 1.0, 1.0])
+        self.delta_location = Vector([0.0, 0.0, 0.0])
+        self.delta_rotation_euler = Vector([0.0, 0.0, 0.0])
+        self.delta_scale = Vector([1.0, 1.0, 1.0])
         self.data = None
 
     def __repr__(self):
@@ -267,9 +277,7 @@ class TestCoreStateRoundtrip(unittest.TestCase):
         parent = MockObject("Parent", "EMPTY")
         child = MockObject("Child", "MESH")
         child.parent = parent
-        child.matrix_local = Matrix(
-            [[1, 0, 0, 2], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
-        )
+        child.location = Vector([2.0, 0.0, 0.0])
         light = MockObject("Key", "LIGHT")
         light.data = MockLightData(energy=500.0, color=(1, 0.8, 0.6))
         cam = MockObject("Cam", "CAMERA")
@@ -309,7 +317,7 @@ class TestCoreStateRoundtrip(unittest.TestCase):
         loaded = json.loads(dumped)
         self.assertEqual(loaded["frame_current"], 42)
         self.assertEqual(loaded["camera"], "Cam")
-        self.assertEqual(loaded["objects"][1]["matrix_local"][0][3], 2.0)
+        self.assertEqual(loaded["objects"][1]["location"][0], 2.0)
         self.assertEqual(loaded["world"]["background"]["strength"], 1.0)
         # 渲染设置（Cycles 采样）
         prop_map = {p[0]: p[1] for p in loaded["render"]["props"]}
@@ -329,13 +337,15 @@ class TestCoreStateRoundtrip(unittest.TestCase):
         scene.world.color = Vector([1, 0, 0])
         scene.world.node_tree = None
         for obj in scene.collection.objects:
-            obj.matrix_local = Matrix()
+            obj.location = Vector([0.0, 0.0, 0.0])
+            obj.rotation_euler = Vector([0.0, 0.0, 0.0])
+            obj.scale = Vector([1.0, 1.0, 1.0])
             obj.hide_viewport = False
             obj.hide_render = False
         sub = scene.collection.children[0]
         sub.hide_viewport = True
         sub.hide_render = True
-        sub.objects[0].matrix_local = Matrix()
+        sub.objects[0].location = Vector([0.0, 0.0, 0.0])
         scene.render.resolution_x = 640
 
         # 应用快照恢复
@@ -355,7 +365,7 @@ class TestCoreStateRoundtrip(unittest.TestCase):
         self.assertEqual(list(bg.inputs["Color"].default_value), [0.05, 0.05, 0.05, 1])
         # 物体矩阵与可见性
         objs = {o.name: o for o in scene.collection.objects}
-        self.assertEqual(objs["Child"].matrix_local.rows[0][3], 2.0)
+        self.assertEqual(list(objs["Child"].location)[0], 2.0)
         self.assertEqual(objs["Key"].data.energy, 500.0)
         self.assertEqual(list(objs["Key"].data.color), [1.0, 0.8, 0.6])
         # 隐藏物体
@@ -393,6 +403,51 @@ class TestCoreStateRoundtrip(unittest.TestCase):
         state = self.core.capture_scene_state(scene)
         self.assertIsNone(state["world"])
         self.core.apply_scene_state(scene, state)  # 不应抛异常
+
+    def test_excluded_collection_transform_roundtrip(self):
+        """回归（v1.4.4）：exclude 集合中的对象 matrix_local 可能是依赖图未
+        评估的默认值（单位矩阵），快照必须用 location/rotation/scale 记录，
+        应用后位置旋转不归零。"""
+        scene = self._build_scene()
+        hidden = scene.collection.children[0].objects[0]
+        hidden.location = Vector([7.0, -3.0, 2.0])
+        hidden.rotation_euler = Vector([1.0, 0.5, 0.25])
+        hidden.matrix_local = Matrix()  # 模拟依赖图未评估 -> 单位矩阵
+        state = self.core.capture_scene_state(scene)
+
+        cap = [o for o in state["objects"] if o["name"] == "Hidden"][0]
+        self.assertIn("location", cap)  # v3 新格式：直接数据
+        self.assertEqual(cap["location"], [7.0, -3.0, 2.0])
+        self.assertEqual(cap["rotation"], [1.0, 0.5, 0.25])
+
+        # 破坏后应用，位置旋转应完整恢复（不归零）
+        hidden.location = Vector([0.0, 0.0, 0.0])
+        hidden.rotation_euler = Vector([0.0, 0.0, 0.0])
+        self.core.apply_scene_state(scene, state)
+        self.assertEqual(list(hidden.location), [7.0, -3.0, 2.0])
+        self.assertEqual(list(hidden.rotation_euler), [1.0, 0.5, 0.25])
+
+    def test_legacy_snapshot_matrix_local_fallback(self):
+        """旧快照（v1/v2，无 location/rotation/scale 字段）回退用 matrix_local。"""
+        scene = self._build_scene()
+        state = self.core.capture_scene_state(scene)
+        # 模拟旧格式：移除 v3 字段，仅保留 matrix_local
+        for o in state["objects"]:
+            o.pop("location", None)
+            o.pop("rotation", None)
+            o.pop("rotation_mode", None)
+            o.pop("scale", None)
+            o.pop("delta_location", None)
+            o.pop("delta_rotation_euler", None)
+            o.pop("delta_scale", None)
+            o["matrix_local"] = [
+                [1, 0, 0, 5], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]
+            ]
+        child = [o for o in scene.collection.objects if o.name == "Child"][0]
+        child.matrix_local = Matrix()
+        self.core.apply_scene_state(scene, state)
+        # 回退分支：matrix_local 被恢复（x 平移 5）
+        self.assertEqual(child.matrix_local.rows[0][3], 5.0)
 
     def test_view_layer_exclude_roundtrip(self):
         # 集合的视图层级开关（outliner 勾选框 = exclude）应被捕获并恢复
