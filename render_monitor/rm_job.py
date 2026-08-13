@@ -11,19 +11,23 @@
     4. use_snapshot_frame  "1" / "0"：渲染时是否使用快照记录的帧号
     5. progress_path       进度 JSON 输出路径（主进程轮询）
 
-进度 JSON 结构：
-    {"state": "running"|"done", "total": N,
-     "shots": [{"uid":..., "name":..., "status": "PENDING|DONE|FAILED",
-                "path":..., "error":...}, ...]}
+进度写入 progress 参数指定的文件中——该文件被两个进程**内存映射（mmap）**
+共享：子进程把 `{"state", "total", "shots"}` 序列化为 JSON 写入映射缓冲
+（带 4 字节长度前缀，见 utils.PROGRESS_MMAP_SIZE），主进程轮询读取；
+读写走页面缓存不落盘。shots 项结构：
+    {"uid":..., "name":..., "status": "PENDING|DONE|FAILED",
+     "path":..., "error":...}
 
 子进程运行在完全独立的 OS 进程中，不触碰主进程场景；
-主进程 UI 由 timer 轮询本脚本写出的进度文件来更新。
+主进程 UI 由 timer 轮询共享内存的进度缓冲来更新。
 """
 
 from __future__ import annotations
 
 import json
+import mmap
 import os
+import struct
 import sys
 import time
 
@@ -42,22 +46,60 @@ from render_monitor import utils  # noqa: E402
 
 
 def _write_progress(progress_path, state, total, shots):
-    payload = {
-        "state": state,
-        "total": total,
-        "shots": shots,
-    }
-    # 原子写：先写临时文件再替换，避免主进程读到半截 JSON
-    tmp = progress_path + ".tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False)
-        os.replace(tmp, progress_path)
-    except OSError:
+    """把进度写入文件-backed mmap（与主进程共享内存，不落盘）。
+
+    缓冲布局见 utils.PROGRESS_MMAP_SIZE 注释：先写 payload 再写长度前缀，
+    读端看到新长度时 payload 必然完整（单写者单读者，无需锁）。
+    mmap 惰性打开一次并保持整个会话复用；路径变化时先关闭旧的再开新的，
+    避免测试/多会话场景泄漏文件句柄。写入失败只丢本次进度，不抛异常。
+    """
+    payload = json.dumps(
+        {"state": state, "total": total, "shots": shots}, ensure_ascii=False
+    ).encode("utf-8")
+    mm = _stats.get("mm")
+    if mm is None or _stats.get("mm_path") != progress_path:
+        if mm is not None:
+            try:
+                mm.close()
+            except Exception:  # noqa: BLE001
+                pass
         try:
-            os.remove(tmp)
+            fd = os.open(
+                progress_path,
+                os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0),
+                0o666,
+            )
         except OSError:
+            return
+        try:
+            os.ftruncate(fd, utils.PROGRESS_MMAP_SIZE)
+            mm = mmap.mmap(fd, utils.PROGRESS_MMAP_SIZE, access=mmap.ACCESS_WRITE)
+        except (OSError, ValueError):
+            os.close(fd)
+            return
+        os.close(fd)
+        _stats.update(mm=mm, mm_path=progress_path)
+    if len(payload) > utils.PROGRESS_MMAP_SIZE - utils.PROGRESS_HEADER:
+        return  # 超缓冲（几乎不可能）：保留旧数据，避免写坏缓冲
+    try:
+        mm[utils.PROGRESS_HEADER:utils.PROGRESS_HEADER + len(payload)] = payload
+        # 不调用 mm.flush()：flush 是同步落盘（msync/FlushViewOfFile），
+        # 会违背"渲染期间零磁盘 IO"的初衷。同机进程共享内核页面缓存，
+        # 读端经 mmap 立即可见写入；长度前缀保证读到完整新/旧数据。
+        mm[0:utils.PROGRESS_HEADER] = struct.pack(">I", len(payload))
+    except (ValueError, OSError):
+        pass
+
+
+def _close_progress_mmap():
+    """关闭进度 mmap（会话结束/路径切换前调用，Windows 上保证目录可删）。"""
+    mm = _stats.get("mm")
+    if mm is not None:
+        try:
+            mm.close()
+        except Exception:  # noqa: BLE001
             pass
+        _stats.update(mm=None, mm_path="")
 
 
 # 当前正在渲染的进度状态（render_stats handler 更新，_main 设置）
@@ -69,6 +111,8 @@ _stats = {
     "total": 0,
     "shots": [],
     "tile_weights": [],  # 当前张各分块的像素权重（行优先，和为 1）
+    "mm": None,          # 进度 mmap 对象（惰性打开，会话结束关闭）
+    "mm_path": "",       # 已映射的进度文件路径（路径变化时重新映射）
 }
 
 
@@ -295,6 +339,7 @@ def _main():
         _write_progress(progress_path, "running", len(snapshots), shots)
 
     _write_progress(progress_path, "done", len(snapshots), shots)
+    _close_progress_mmap()
     return 0
 
 

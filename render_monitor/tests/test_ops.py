@@ -231,6 +231,87 @@ class TestOpsExportIndex(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual([e["index"] for e in exported], [2])
 
+    def test_progress_mmap_roundtrip(self):
+        """进度回传（v1.5.0）：rm_job 写端与 ops 读端经文件-backed mmap 互通。
+
+        读写都走内存映射（页面缓存），内容为 [长度前缀][JSON payload]。
+        """
+        import render_monitor.rm_job as rm_job
+
+        progress = os.path.join(self.tmp, "progress.json")
+        shots = [
+            {"uid": "a" * 32, "name": "shotA", "status": "DONE",
+             "path": "p1.png", "error": ""},
+            {"uid": "b" * 32, "name": "shotB", "status": "RENDERING",
+             "path": "", "error": "", "samples": 80, "samples_total": 128},
+        ]
+        rm_job._stats.update(
+            entry=None, start=None, last_write=0.0, progress_path=progress,
+            total=2, shots=shots, mm=None, mm_path="",
+        )
+        try:
+            rm_job._write_progress(progress, "running", 2, shots)
+            self.ops._active["progress_path"] = progress
+            payload = self.ops._read_progress()
+        finally:
+            rm_job._close_progress_mmap()
+            self.ops._active["progress_path"] = ""
+        self.assertEqual(payload["state"], "running")
+        self.assertEqual(payload["total"], 2)
+        self.assertEqual(payload["shots"][0]["status"], "DONE")
+        self.assertEqual(payload["shots"][1]["samples"], 80)
+
+    def test_progress_mmap_rewrite_shorter(self):
+        """多轮写入：第二次 payload 更短时，长度前缀保证读到新内容（旧尾部残留不影响）。"""
+        import render_monitor.rm_job as rm_job
+
+        progress = os.path.join(self.tmp, "progress.json")
+        rm_job._stats.update(
+            entry=None, start=None, last_write=0.0, progress_path=progress,
+            total=1, shots=[], mm=None, mm_path="",
+        )
+        try:
+            long_shots = [{
+                "uid": "a" * 32, "name": "shotA" + "长" * 50,
+                "status": "RENDERING", "path": "x.png",
+                "error": "some long error message " * 10,
+            }]
+            rm_job._write_progress(progress, "running", 1, long_shots)
+            short_shots = [{"uid": "a" * 32, "name": "A", "status": "DONE",
+                            "path": "", "error": ""}]
+            rm_job._write_progress(progress, "running", 1, short_shots)
+            self.ops._active["progress_path"] = progress
+            payload = self.ops._read_progress()
+        finally:
+            rm_job._close_progress_mmap()
+            self.ops._active["progress_path"] = ""
+        self.assertEqual(payload["shots"][0]["status"], "DONE")
+        self.assertEqual(payload["shots"][0]["name"], "A")
+
+    def test_progress_mmap_bad_header_returns_none(self):
+        """读端对非法长度前缀（如旧版纯 JSON 残留文件）返回 None，不抛异常。"""
+        progress = os.path.join(self.tmp, "bad.json")
+        with open(progress, "wb") as f:
+            f.write(b"\xff\xff\xff\xff{}")  # 长度 0xFFFFFFFF 远超缓冲 → None
+        self.ops._active["progress_path"] = progress
+        try:
+            self.assertIsNone(self.ops._read_progress())
+        finally:
+            self.ops._active["progress_path"] = ""
+
+    def test_progress_mmap_read_empty_or_missing(self):
+        """读端对不存在/空（子进程尚未写入）的文件返回 None，不抛异常。"""
+        self.ops._active["progress_path"] = os.path.join(self.tmp, "nope.json")
+        self.assertIsNone(self.ops._read_progress())
+        empty = os.path.join(self.tmp, "empty.json")
+        with open(empty, "wb"):
+            pass
+        self.ops._active["progress_path"] = empty
+        try:
+            self.assertIsNone(self.ops._read_progress())
+        finally:
+            self.ops._active["progress_path"] = ""
+
 
 if __name__ == "__main__":
     unittest.main()

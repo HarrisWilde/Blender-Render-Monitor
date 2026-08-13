@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import importlib
 import json
+import mmap
 import os
+import struct
 import sys
 import tempfile
 import types
@@ -52,10 +54,17 @@ class TestRmJob(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="rm_job_test_")
         self.addCleanup(self._cleanup_tmp)
-        # 重置模块级渲染状态，避免用例间泄漏
+        # 关闭上一用例遗留的进度 mmap（Windows 上不关闭会导致目录删除失败），
+        # 并重置模块级渲染状态，避免用例间泄漏
+        mm = self.rm_job._stats.get("mm")
+        if mm is not None:
+            try:
+                mm.close()
+            except Exception:  # noqa: BLE001
+                pass
         self.rm_job._stats.update(
             entry=None, start=None, last_write=0.0, progress_path="",
-            total=0, shots=[], tile_weights=[],
+            total=0, shots=[], tile_weights=[], mm=None, mm_path="",
         )
         # 重建 scene 与快照
         self.scene = MockScene("Scene")
@@ -113,6 +122,16 @@ class TestRmJob(unittest.TestCase):
             sys.argv = old_argv
         return code, progress
 
+    def _read_progress(self, path):
+        """模拟主进程读端：从文件-backed mmap 读取进度 payload。"""
+        with open(path, "rb") as f:
+            mm = mmap.mmap(f.fileno(), os.path.getsize(path), access=mmap.ACCESS_READ)
+            try:
+                (length,) = struct.unpack(">I", mm[0:4])
+                return json.loads(mm[4:4 + length])
+            finally:
+                mm.close()
+
     def test_missing_separator(self):
         old_argv = sys.argv
         sys.argv = ["blender", "-b"]
@@ -133,8 +152,7 @@ class TestRmJob(unittest.TestCase):
         snaps = [self._make_snapshot("a" * 32, "shotA"), self._make_snapshot("b" * 32, "shotB")]
         code, progress = self._run(snaps)
         self.assertEqual(code, 0)
-        with open(progress, encoding="utf-8") as f:
-            payload = json.load(f)
+        payload = self._read_progress(progress)
         self.assertEqual(payload["state"], "done")
         self.assertEqual(payload["total"], 2)
         statuses = [s["status"] for s in payload["shots"]]
@@ -148,8 +166,7 @@ class TestRmJob(unittest.TestCase):
         snaps = [self._make_snapshot("a" * 32, "shotA"), self._make_snapshot("b" * 32, "shotB")]
         code, progress = self._run(snaps, template="{name}_{index}")
         self.assertEqual(code, 0)
-        with open(progress, encoding="utf-8") as f:
-            payload = json.load(f)
+        payload = self._read_progress(progress)
         paths = [s["path"] for s in payload["shots"]]
         self.assertTrue(paths[0].endswith("shotA_1.png"), paths[0])
         self.assertTrue(paths[1].endswith("shotB_2.png"), paths[1])
@@ -171,8 +188,7 @@ class TestRmJob(unittest.TestCase):
         code, progress = self._run(snaps)
         # 单张失败被捕获，脚本正常结束
         self.assertEqual(code, 0)
-        with open(progress, encoding="utf-8") as f:
-            payload = json.load(f)
+        payload = self._read_progress(progress)
         statuses = {s["uid"]: s for s in payload["shots"]}
         self.assertEqual(statuses[fail_uid]["status"], "FAILED")
         self.assertIn("mock render boom", statuses[fail_uid]["error"])
@@ -187,8 +203,7 @@ class TestRmJob(unittest.TestCase):
         self.bpy_mod.ops.render.render = fake_render_no_write
         code, progress = self._run(snaps)
         self.assertEqual(code, 0)
-        with open(progress, encoding="utf-8") as f:
-            payload = json.load(f)
+        payload = self._read_progress(progress)
         self.assertEqual(payload["shots"][0]["status"], "FAILED")
         self.assertIn("未生成输出文件", payload["shots"][0]["error"])
 
@@ -207,8 +222,7 @@ class TestRmJob(unittest.TestCase):
         self.bpy_mod.ops.render.render = fake_render_fail
         code, progress = self._run(snaps)
         self.assertEqual(code, 0)
-        with open(progress, encoding="utf-8") as f:
-            payload = json.load(f)
+        payload = self._read_progress(progress)
         self.assertEqual(payload["shots"][0]["status"], "FAILED")
         # 旧文件未被删除、未被覆盖
         with open(old_file, "rb") as f:
@@ -224,8 +238,7 @@ class TestRmJob(unittest.TestCase):
             f.write(b"OLD-RENDER")
         code, progress = self._run(snaps)
         self.assertEqual(code, 0)
-        with open(progress, encoding="utf-8") as f:
-            payload = json.load(f)
+        payload = self._read_progress(progress)
         self.assertEqual(payload["shots"][0]["status"], "DONE")
         # 最终路径被新渲染结果替换
         with open(old_file, "rb") as f:
@@ -254,8 +267,7 @@ class TestRmJob(unittest.TestCase):
         self.assertEqual(entry["samples_total"], 256)
         self.assertAlmostEqual(entry["remaining"], 1.33, places=2)
         self.assertGreater(entry["elapsed"], 0.0)  # 已用时间按 start 推算
-        with open(progress, encoding="utf-8") as f:
-            payload = json.load(f)
+        payload = self._read_progress(progress)
         self.assertEqual(payload["shots"][0]["samples"], 96)
         self.assertAlmostEqual(payload["shots"][0]["remaining"], 1.33, places=2)
 
@@ -284,8 +296,7 @@ class TestRmJob(unittest.TestCase):
         # 初始化阶段的 stats 没有 Sample/Time 信息，不应崩溃也不应写坏数据
         entry, progress = self._stats_entry()
         self.rm_job._on_render_stats("Mem: 1M | Updating Objects")
-        with open(progress, encoding="utf-8") as f:
-            payload = json.load(f)
+        payload = self._read_progress(progress)
         self.assertNotIn("samples", payload["shots"][0])
 
     def test_tile_switch_updates_samples_and_progress(self):

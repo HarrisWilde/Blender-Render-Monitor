@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import mmap
 import os
 import shutil
+import struct
 import subprocess
 import tempfile
 import time
@@ -92,10 +94,40 @@ _active = {
 
 
 def _read_progress():
+    """从文件-backed mmap 读取子进程进度（读写走页面缓存，不落盘）。
+
+    布局见 utils.PROGRESS_MMAP_SIZE 注释：长度前缀最后写，读到新长度时
+    payload 必然完整；文件不存在 / 尚未写入 / 解析失败一律返回 None
+    （等价于"暂无进度"），由调用方容错处理。
+    """
+    path = _active["progress_path"]
+    if not path or not os.path.exists(path):
+        return None
     try:
-        with open(_active["progress_path"], encoding="utf-8") as f:
-            return json.load(f)
+        size = os.path.getsize(path)
+        if size < utils.PROGRESS_HEADER:
+            return None
+        with open(path, "rb") as f:
+            mm = mmap.mmap(
+                f.fileno(), min(size, utils.PROGRESS_MMAP_SIZE),
+                access=mmap.ACCESS_READ,
+            )
     except (OSError, ValueError):
+        return None
+    try:
+        (length,) = struct.unpack(">I", mm[0:utils.PROGRESS_HEADER])
+    except struct.error:
+        mm.close()
+        return None
+    try:
+        if length <= 0 or length > mm.size() - utils.PROGRESS_HEADER:
+            return None
+        data = mm[utils.PROGRESS_HEADER:utils.PROGRESS_HEADER + length]
+    finally:
+        mm.close()
+    try:
+        return json.loads(data)
+    except (ValueError, UnicodeDecodeError):
         return None
 
 

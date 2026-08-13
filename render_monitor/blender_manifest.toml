@@ -3,7 +3,7 @@ schema_version = "1.0.0"
 # Render Monitor 渲染监视器 - 扩展清单（Blender 4.2+ 扩展系统）。
 # 与 bl_info 保持同步：id 与模块名/文件夹名一致，version 与 bl_info["version"] 一致。
 id = "render_monitor"
-version = "1.4.6"
+version = "1.5.0"
 name = "Render Monitor 渲染监视器"
 tagline = "批量渲染场景快照，UI 不冻结，类似 KeyShot 的 Render Monitor"
 maintainer = "Render Monitor Contributors"
