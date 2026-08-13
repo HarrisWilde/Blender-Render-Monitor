@@ -34,11 +34,16 @@ class RM_UL_shots(UIList):
                         break
             except (AttributeError, TypeError):
                 pass
-            # 序号列：固定紧凑宽度 + 右对齐。label 默认按文本取宽（1 位和
-            # 10+ 位宽度不同），会让后面的勾选/名称列横向错位；固定宽度后
-            # 所有行（含已完成/待渲染）在纵向上严格对齐。
+            # 序号列：宽度随当前最大序号位数自适应（1 位≈0.7u、2 位≈1.0u、
+            # 3 位≈1.3u……），保证 100+ 的 3 位数也不被截断成省略号，
+            # 同时位数少时列不浪费；所有行宽度一致，横向严格对齐。
+            try:
+                max_index = len(data.rm_shots)
+            except (AttributeError, TypeError):
+                max_index = 0
+            digits = len(str(max_index))
             num = row.column(align=True)
-            num.ui_units_x = 1.0
+            num.ui_units_x = 0.4 + 0.3 * digits
             num.alignment = "RIGHT"
             num.label(text=str(index))
             # 渲染勾选：图标按钮（CHECKBOX_HLT=勾选 / CHECKBOX_DEHLT=未勾选），

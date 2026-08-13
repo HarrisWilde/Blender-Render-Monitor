@@ -185,6 +185,7 @@ def _main():
         }
         shots.append(entry)
         try:
+            actual_path = ""
             data = shot["data"]
             # 列表顺序编号（从 1 开始），用于文件命名 {index} 占位符
             shot_index = int(shot.get("index", i + 1))
@@ -237,13 +238,13 @@ def _main():
             )
             path = utils.build_output_path(outdir, filename, ext)
             os.makedirs(outdir, exist_ok=True)
-            # 清理同路径旧文件，避免误判成功
-            if os.path.exists(path):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-            scene.render.filepath = path
+            # 渲染保护：绝不预先删除旧输出文件——渲染失败/取消时保留上一次的
+            # 成功输出，避免误删用户已渲染的图。渲染到唯一临时文件，成功后
+            # 原子替换（os.replace）到最终路径。
+            tmp_path = path + f".rmtmp{os.urandom(4).hex()}"
+            # Blender 对无扩展名 filepath 自动追加扩展名（如 .png）
+            actual_path = tmp_path + "." + ext
+            scene.render.filepath = tmp_path
             # 标记渲染中并立即上报，主进程才能显示"正在渲染：名称"
             entry["status"] = "RENDERING"
             # 初始化实时统计字段（render_stats handler 会持续更新）
@@ -275,15 +276,22 @@ def _main():
             )
             _write_progress(progress_path, "running", len(snapshots), shots)
             bpy.ops.render.render(scene=scene.name, write_still=True, use_viewport=False)
-            if not (os.path.exists(path) and os.path.getsize(path) > 0):
+            if not (os.path.exists(actual_path) and os.path.getsize(actual_path) > 0):
                 raise RuntimeError(
                     f"渲染未生成输出文件（可能被取消或写盘失败）: {path}"
                 )
+            os.replace(actual_path, path)
             entry["status"] = "DONE"
             entry["path"] = path
         except Exception as exc:  # noqa: BLE001
             entry["status"] = "FAILED"
             entry["error"] = str(exc)
+            # 清理本次渲染残留的临时文件；绝不触碰最终路径的旧文件
+            try:
+                if actual_path and os.path.exists(actual_path):
+                    os.remove(actual_path)
+            except OSError:
+                pass
         _write_progress(progress_path, "running", len(snapshots), shots)
 
     _write_progress(progress_path, "done", len(snapshots), shots)

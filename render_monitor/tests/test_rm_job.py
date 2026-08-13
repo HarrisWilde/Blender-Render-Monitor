@@ -67,8 +67,11 @@ class TestRmJob(unittest.TestCase):
         def fake_render(*args, **kwargs):
             if self.render_error:
                 raise self.render_error
-            # 模拟渲染：在 scene.render.filepath 处生成文件
+            # 模拟渲染：在 scene.render.filepath 处生成文件。
+            # 模拟 Blender：对无扩展名 filepath 自动追加扩展名。
             path = self.scene.render.filepath
+            if not path.endswith(".png"):
+                path += ".png"
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
             with open(path, "wb") as f:
                 f.write(b"fake-image")
@@ -188,6 +191,48 @@ class TestRmJob(unittest.TestCase):
             payload = json.load(f)
         self.assertEqual(payload["shots"][0]["status"], "FAILED")
         self.assertIn("未生成输出文件", payload["shots"][0]["error"])
+
+    def test_old_output_preserved_on_failure(self):
+        """数据保护（v1.4.5）：渲染失败/未生成文件时，最终路径的旧输出文件必须保留。"""
+        snaps = [self._make_snapshot("a" * 32, "shotA")]  # 模板 {name}_{frame:04d}
+        outdir = os.path.join(self.tmp, "out")
+        os.makedirs(outdir, exist_ok=True)
+        old_file = os.path.join(outdir, "shotA_0010.png")  # frame=10
+        with open(old_file, "wb") as f:
+            f.write(b"OLD-RENDER")
+
+        def fake_render_fail(*args, **kwargs):
+            raise RuntimeError("mock render boom")
+
+        self.bpy_mod.ops.render.render = fake_render_fail
+        code, progress = self._run(snaps)
+        self.assertEqual(code, 0)
+        with open(progress, encoding="utf-8") as f:
+            payload = json.load(f)
+        self.assertEqual(payload["shots"][0]["status"], "FAILED")
+        # 旧文件未被删除、未被覆盖
+        with open(old_file, "rb") as f:
+            self.assertEqual(f.read(), b"OLD-RENDER")
+
+    def test_success_atomically_replaces_old_output(self):
+        """数据保护（v1.4.5）：渲染成功时新文件原子替换旧文件，无 .rmtmp 残留。"""
+        snaps = [self._make_snapshot("a" * 32, "shotA")]
+        outdir = os.path.join(self.tmp, "out")
+        os.makedirs(outdir, exist_ok=True)
+        old_file = os.path.join(outdir, "shotA_0010.png")
+        with open(old_file, "wb") as f:
+            f.write(b"OLD-RENDER")
+        code, progress = self._run(snaps)
+        self.assertEqual(code, 0)
+        with open(progress, encoding="utf-8") as f:
+            payload = json.load(f)
+        self.assertEqual(payload["shots"][0]["status"], "DONE")
+        # 最终路径被新渲染结果替换
+        with open(old_file, "rb") as f:
+            self.assertEqual(f.read(), b"fake-image")
+        # 无临时文件残留
+        leftovers = [p for p in os.listdir(outdir) if ".rmtmp" in p]
+        self.assertEqual(leftovers, [])
 
     def _stats_entry(self):
         entry = {"uid": "x" * 32, "name": "shotX", "status": "RENDERING",

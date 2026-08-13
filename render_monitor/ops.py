@@ -616,6 +616,23 @@ class RM_OT_clear_done(bpy.types.Operator):
     def poll(cls, context):
         return not context.window_manager.rm_busy
 
+    def invoke(self, context, event):
+        scene = context.scene
+        n = sum(1 for s in scene.rm_shots if s.status == "DONE")
+        if n == 0:
+            self.report({"WARNING"}, "没有已完成状态的快照")
+            return {"CANCELLED"}
+        # 删除快照不可恢复，二次确认防误点（与「清空全部」一致）
+        return context.window_manager.invoke_confirm(self, event)
+
+    def draw(self, context):
+        n = sum(1 for s in context.scene.rm_shots if s.status == "DONE")
+        self.layout.label(
+            text=f"将删除 {n} 个已完成快照（渲染状态一并清除）",
+            icon="ERROR",
+        )
+        self.layout.label(text="此操作不可撤销。")
+
     def execute(self, context):
         scene = context.scene
         for i in range(len(scene.rm_shots) - 1, -1, -1):
