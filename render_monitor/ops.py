@@ -90,6 +90,7 @@ _active = {
     "progress_path": "",
     "log_path": "",
     "total": 0,
+    "uids": [],               # 本次渲染队列的快照 uid（用于收尾精确统计/修正状态）
 }
 
 
@@ -167,7 +168,9 @@ def _update_ui_from_progress(payload):
             phase = s.get("phase") or ""
     scene.rm_render_done = done
     scene.rm_render_failed = failed
-    scene.rm_render_total = payload.get("total", _active["total"])
+    # 用启动时记录的队列总数，而不是子进程回传的 total：子进程致命错误时
+    # 会写 total=0，若信任它会导致面板进度总数被清零。
+    scene.rm_render_total = _active["total"]
     if current:
         scene.rm_render_current = current
     scene.rm_render_samples = samples
@@ -215,21 +218,46 @@ def _finish_session(returncode, cancelled=False):
     """
     scene = bpy.data.scenes.get(_active["scene_name"])
     payload = _read_progress()
+    uids = set(_active.get("uids") or ())
 
-    # 子进程异常退出（非 0）且没有进度文件时，把未完成项标记为失败
-    if returncode != 0 and scene is not None and payload is None:
+    # 子进程异常退出（非 0）且非用户主动停止时，修正本次队列里中断快照的状态：
+    # - RENDERING 的必是失败（被中断，不会再完成）；
+    # - 子进程“早退”（无进度文件，或致命错误 state=error）时，连未开始的
+    #   PENDING 也标失败（整批根本没跑起来）。
+    if returncode != 0 and scene is not None and not cancelled:
+        crashed_early = payload is None or payload.get("state") == "error"
         for shot in scene.rm_shots:
-            if shot.status in ("PENDING", "RENDERING"):
+            if shot.uid not in uids:
+                continue
+            if shot.status == "RENDERING":
+                shot.status = "FAILED"
+            elif shot.status == "PENDING" and crashed_early:
                 shot.status = "FAILED"
 
-    if payload:
-        done = sum(1 for s in payload["shots"] if s["status"] == "DONE")
-        failed = sum(1 for s in payload["shots"] if s["status"] == "FAILED")
-        if scene is not None:
-            scene.rm_render_done = done
-            scene.rm_render_failed = failed
-    else:
-        done = failed = 0
+    # 从场景快照本身按本次队列统计真实完成/失败数，保证计数与状态一致。
+    # 不依赖进度文件的 shots：崩溃时可能过时，致命错误时还含 uid="" 的假条目。
+    done = failed = 0
+    if scene is not None:
+        for shot in scene.rm_shots:
+            if shot.uid not in uids:
+                continue
+            if shot.status == "DONE":
+                done += 1
+            elif shot.status == "FAILED":
+                failed += 1
+        scene.rm_render_done = done
+        scene.rm_render_failed = failed
+        # 进度显示属性无条件重置（含用户主动停止：避免残留旧进度值）
+        scene.rm_render_current = ""
+        scene.rm_render_samples = ""
+        scene.rm_render_samples_cur = 0
+        scene.rm_render_samples_total = 0
+        scene.rm_render_tiles_done = 0
+        scene.rm_render_tiles_total = 1
+        scene.rm_render_progress = 0.0
+        scene.rm_render_phase = ""
+        scene.rm_render_time = ""
+        scene.rm_render_remaining = ""
 
     if not cancelled:
         log_hint = ""
@@ -245,16 +273,6 @@ def _finish_session(returncode, cancelled=False):
         msg = f"渲染完成：成功 {done}，失败 {failed} {log_hint}".strip()
         if scene is not None:
             scene.rm_last_message = msg
-            scene.rm_render_current = ""
-            scene.rm_render_samples = ""
-            scene.rm_render_samples_cur = 0
-            scene.rm_render_samples_total = 0
-            scene.rm_render_tiles_done = 0
-            scene.rm_render_tiles_total = 1
-            scene.rm_render_progress = 0.0
-            scene.rm_render_phase = ""
-            scene.rm_render_time = ""
-            scene.rm_render_remaining = ""
         print(f"[Render Monitor] {msg}")
 
     # 清理（独立 try，确保必执行）
@@ -270,7 +288,7 @@ def _finish_session(returncode, cancelled=False):
             _active["process"] = None
         shutil.rmtree(_active["tmpdir"], ignore_errors=True)
         _active.update(tmpdir="", progress_path="", log_path="", total=0,
-                       scene_name="")
+                       scene_name="", uids=[])
         bpy.context.window_manager.rm_busy = False
         _tag_redraw()
     except BaseException:  # noqa: BLE001
@@ -295,13 +313,11 @@ def _stop_active():
             except Exception:  # noqa: BLE001
                 pass
     scene = bpy.data.scenes.get(_active["scene_name"])
-    payload = _read_progress()
-    if payload and scene is not None:
-        for s in payload.get("shots", []):
-            if s["status"] == "RENDERING":
-                shot = _shot_by_uid(scene, s["uid"])
-                if shot is not None:
-                    shot.status = "PENDING"
+    uids = set(_active.get("uids") or ())
+    if scene is not None:
+        for shot in scene.rm_shots:
+            if shot.uid in uids and shot.status == "RENDERING":
+                shot.status = "PENDING"
     _finish_session(-1, cancelled=True)
     if scene is not None:
         scene.rm_last_message = "已停止渲染（未完成的快照保持待渲染状态）"
@@ -315,6 +331,7 @@ def _start_subprocess_render(context, uids):
         return False, "已有渲染任务在进行中"
     if not uids:
         return False, "没有勾选的快照（请先在列表中勾选要渲染的，或点「全选」）"
+    uids_set = set(uids)  # O(1) 成员判断；uids 保留原顺序用于 _active 记录
     if not bpy.app.binary_path:
         return False, "无法定位 Blender 可执行文件（bpy.app.binary_path 为空，可能是以 Python 模块方式运行）"
     # 未保存文件：// 相对路径无法解析，必须使用绝对路径输出目录
@@ -328,7 +345,7 @@ def _start_subprocess_render(context, uids):
     skipped = 0
     old_snapshots = 0
     for i, s in enumerate(scene.rm_shots):
-        if s.uid in uids:
+        if s.uid in uids_set:
             # {index} = 快照在列表中的原始顺序（从 1 开始），而不是本次渲染队列
             # 的重新编号：否则「仅渲染未完成」中断后续跑或单张渲染时，编号会从
             # 1 重新计数，导致文件名错乱/覆盖已渲染文件。
@@ -414,6 +431,7 @@ def _start_subprocess_render(context, uids):
         progress_path=progress,
         log_path=log_path,
         total=len(snapshots),
+        uids=list(uids),
     )
     scene.rm_render_done = 0
     scene.rm_render_failed = 0

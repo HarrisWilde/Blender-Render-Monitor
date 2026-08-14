@@ -322,15 +322,25 @@ def _capture_object(obj):
     return st
 
 
-def _parent_depth(objs_by_name, name, memo):
-    """计算对象在父链中的深度，用于先父后子恢复。"""
+def _parent_depth(objs_by_name, name, memo, _visiting=None):
+    """计算对象在父链中的深度，用于先父后子恢复。
+
+    _visiting 用于检测父链成环（真实 Blender 场景不可能出现，纯防御），
+    环上节点返回 0，避免无限递归。
+    """
     if name in memo:
         return memo[name]
+    if _visiting is None:
+        _visiting = set()
+    if name in _visiting:
+        return 0
     o = objs_by_name.get(name)
     if not o or not o.get("parent"):
         memo[name] = 0
     else:
-        memo[name] = 1 + _parent_depth(objs_by_name, o["parent"], memo)
+        _visiting.add(name)
+        memo[name] = 1 + _parent_depth(objs_by_name, o["parent"], memo, _visiting)
+        _visiting.discard(name)
     return memo[name]
 
 

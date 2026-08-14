@@ -33,17 +33,24 @@ def format_filename(template: str, shot_name: str, frame: int, index: int = 1) -
     tpl = (template or DEFAULT_FILE_TEMPLATE).strip()
     if "{name}" not in tpl and "{frame}" not in tpl and "{index}" not in tpl:
         tpl = DEFAULT_FILE_TEMPLATE
+    # 先把 frame/index 归一化成安全 int：入参为 None 或非数字时置 0，
+    # 避免回退分支里的 int() 再次抛出未捕获异常。
+    try:
+        frame = int(frame)
+        index = int(index)
+    except (TypeError, ValueError):
+        frame = index = 0
     try:
         raw = tpl.format(
             name=sanitize_filename(shot_name),
-            frame=int(frame),
-            index=int(index),
+            frame=frame,
+            index=index,
         )
     except (KeyError, IndexError, ValueError, AttributeError):
         raw = DEFAULT_FILE_TEMPLATE.format(
             name=sanitize_filename(shot_name),
-            frame=int(frame),
-            index=int(index),
+            frame=frame,
+            index=index,
         )
     return sanitize_filename(raw)
 

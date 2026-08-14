@@ -23,7 +23,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from .test_core import Matrix, MockData, MockScene, Vector  # noqa: F401
+from .test_core import Matrix, MockData, MockNamedCollection, MockScene, Vector  # noqa: F401
 
 
 class MockShot:
@@ -94,6 +94,10 @@ class TestOpsExportIndex(unittest.TestCase):
             return {"FINISHED"}
 
         bpy_mod.ops.wm.save_as_mainfile = fake_save
+        # _finish_session / _update_ui_from_progress 依赖 context 与 scenes
+        bpy_mod.context = SimpleNamespace(window_manager=SimpleNamespace(rm_busy=False))
+        bpy_mod.data.scenes = MockNamedCollection("name")
+        bpy_mod.data.window_managers = []  # _tag_redraw 遍历，空即可
         sys.modules["bpy"] = bpy_mod
         cls.bpy_mod = bpy_mod
 
@@ -104,6 +108,7 @@ class TestOpsExportIndex(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="rm_ops_test_")
         self.addCleanup(self._cleanup_tmp)
         self.scene = MockScene("Scene")
+        self.bpy_mod.data.scenes.add(self.scene)
         self.scene.rm_output_dir = os.path.join(self.tmp, "out")
         self.scene.rm_file_template = "{name}_{index}"
         self.scene.rm_use_snapshot_frame = True
@@ -124,7 +129,7 @@ class TestOpsExportIndex(unittest.TestCase):
         # 重置模块级会话状态，避免用例间泄漏
         self.ops._active.update(
             process=None, scene_name="", tmpdir="", progress_path="",
-            log_path="", total=0,
+            log_path="", total=0, uids=[],
         )
 
     def _context(self):
@@ -311,6 +316,83 @@ class TestOpsExportIndex(unittest.TestCase):
             self.assertIsNone(self.ops._read_progress())
         finally:
             self.ops._active["progress_path"] = ""
+
+    # ------------------------------------------------------------------
+    # 收尾会话状态修正（回归：子进程崩溃/致命错误时状态与计数一致）
+    # ------------------------------------------------------------------
+
+    def _setup_finish(self, uid_statuses):
+        """构造 rm_shots 与会话状态，返回按 uid 顺序的 shot 列表。"""
+        shots = [
+            MockShot(uid, f"shot{i}", status=st)
+            for i, (uid, st) in enumerate(uid_statuses)
+        ]
+        self.scene.rm_shots = MockShotList(shots)
+        self.ops._active.update(
+            process=None, scene_name="Scene", tmpdir=self.tmp,
+            progress_path="", log_path="", total=len(shots),
+            uids=[s.uid for s in shots],
+        )
+        return shots
+
+    def test_finish_session_marks_interrupted_as_failed(self):
+        """回归：子进程崩溃（有进度文件、state=running）时，正在渲染的
+        快照标失败、未开始的保持待渲染；计数与状态一致、进度属性重置。"""
+        shots = self._setup_finish([
+            ("d" * 32, "DONE"),
+            ("e" * 32, "RENDERING"),
+            ("f" * 32, "PENDING"),
+        ])
+        with mock.patch.object(
+            self.ops, "_read_progress",
+            return_value={"state": "running", "total": 3, "shots": []},
+        ):
+            self.ops._finish_session(-1, cancelled=False)
+        self.assertEqual([s.status for s in shots], ["DONE", "FAILED", "PENDING"])
+        self.assertEqual(self.scene.rm_render_done, 1)
+        self.assertEqual(self.scene.rm_render_failed, 1)
+        self.assertEqual(self.scene.rm_render_progress, 0.0)
+        self.assertEqual(self.scene.rm_render_current, "")
+        self.assertIn("成功 1", self.scene.rm_last_message)
+        self.assertIn("失败 1", self.scene.rm_last_message)
+
+    def test_finish_session_fatal_error_marks_all_failed(self):
+        """回归：子进程致命错误（state=error、含 uid="" 假条目）时，
+        本次队列里未完成的 PENDING/RENDERING 全部标失败。"""
+        shots = self._setup_finish([
+            ("d" * 32, "PENDING"),
+            ("e" * 32, "RENDERING"),
+        ])
+        with mock.patch.object(
+            self.ops, "_read_progress",
+            return_value={"state": "error", "total": 0, "shots": [
+                {"uid": "", "name": "致命错误", "status": "FAILED",
+                 "path": "", "error": "boom"},
+            ]},
+        ):
+            self.ops._finish_session(1, cancelled=False)
+        self.assertEqual([s.status for s in shots], ["FAILED", "FAILED"])
+        self.assertEqual(self.scene.rm_render_failed, 2)
+
+    def test_finish_session_cancelled_keeps_state_but_resets_progress(self):
+        """用户主动停止（cancelled=True）：不把当前张标失败，但进度属性重置。"""
+        shots = self._setup_finish([("e" * 32, "RENDERING")])
+        self.scene.rm_render_progress = 0.75  # 残留进度
+        with mock.patch.object(
+            self.ops, "_read_progress",
+            return_value={"state": "running", "total": 1, "shots": []},
+        ):
+            self.ops._finish_session(-1, cancelled=True)
+        self.assertEqual(shots[0].status, "RENDERING")  # 保持，不标失败
+        self.assertEqual(self.scene.rm_render_progress, 0.0)  # 但进度重置
+
+    def test_update_ui_uses_active_total(self):
+        """回归：子进程回传 total=0（致命错误）时，总数用启动时记录的
+        _active["total"]，不被清零。"""
+        self.scene.rm_shots = MockShotList([MockShot("d" * 32, "shotD")])
+        self.ops._active.update(scene_name="Scene", total=5)
+        self.ops._update_ui_from_progress({"state": "error", "total": 0, "shots": []})
+        self.assertEqual(self.scene.rm_render_total, 5)
 
 
 if __name__ == "__main__":

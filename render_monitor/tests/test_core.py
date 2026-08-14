@@ -493,6 +493,16 @@ class TestCoreStateRoundtrip(unittest.TestCase):
         bg = world1.node_tree.nodes[0]
         self.assertEqual(bg.inputs["Strength"].default_value, 1.0)
 
+    def test_parent_depth_cycle_safe(self):
+        """父链成环（真实场景不可能出现，纯防御）不应无限递归。"""
+        objs = {
+            "A": {"name": "A", "parent": "B"},
+            "B": {"name": "B", "parent": "A"},
+        }
+        # 不抛 RecursionError 即通过
+        self.core._parent_depth(objs, "A", {})
+        self.core._parent_depth(objs, "B", {})
+
 
 if __name__ == "__main__":
     unittest.main()

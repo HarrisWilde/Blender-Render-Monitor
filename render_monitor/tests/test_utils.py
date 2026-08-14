@@ -72,6 +72,16 @@ class TestFormatFilename(unittest.TestCase):
         out = format_filename("{name}{bad}", "shot", 3, index=2)
         self.assertEqual(out, "shot_2")
 
+    def test_invalid_frame_index_falls_back_safely(self):
+        # frame/index 为 None（非法入参）时，回退分支里的 int() 不应再次抛异常
+        out = format_filename("{name} {frame}", "shot", None, index=None)
+        self.assertEqual(out, "shot_0")
+
+    def test_bad_template_with_bad_frame(self):
+        # 模板非法 + frame 非法叠加：回退默认模板也要安全返回
+        out = format_filename("plain-text", "shot", None, index=None)
+        self.assertEqual(out, "shot_0")
+
 
 class TestBuildOutputPath(unittest.TestCase):
     def test_ext_lstrip_dot(self):

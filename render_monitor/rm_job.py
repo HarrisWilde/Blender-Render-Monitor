@@ -286,7 +286,14 @@ def _main():
             # 成功输出，避免误删用户已渲染的图。渲染到唯一临时文件，成功后
             # 原子替换（os.replace）到最终路径。
             tmp_path = path + f".rmtmp{os.urandom(4).hex()}"
-            # Blender 对无扩展名 filepath 自动追加扩展名（如 .png）
+            # Blender 对无扩展名 filepath 自动追加扩展名（如 .png）。
+            # 强制开启 use_file_extension：插件输出文件名完全由模板决定，
+            # 若用户在场景里关闭了该开关，Blender 会原样写入无扩展名的
+            # tmp_path，导致下面的 actual_path 校验必然失败、误判渲染失败。
+            try:
+                scene.render.use_file_extension = True
+            except Exception:  # noqa: BLE001
+                pass
             actual_path = tmp_path + "." + ext
             scene.render.filepath = tmp_path
             # 标记渲染中并立即上报，主进程才能显示"正在渲染：名称"

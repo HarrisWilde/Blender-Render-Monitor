@@ -207,6 +207,29 @@ class TestRmJob(unittest.TestCase):
         self.assertEqual(payload["shots"][0]["status"], "FAILED")
         self.assertIn("未生成输出文件", payload["shots"][0]["error"])
 
+    def test_use_file_extension_forced_true(self):
+        """回归：用户场景关闭 use_file_extension 时，插件强制开启，
+        否则 Blender 原样写无扩展名文件、输出检测必然误判失败。"""
+        snaps = [self._make_snapshot("a" * 32, "shotA")]
+        self.scene.render.use_file_extension = False  # 模拟用户关闭自动加扩展名
+
+        def fake_render_respects_flag(*args, **kwargs):
+            # 模拟真实 Blender：use_file_extension=False 时不追加扩展名
+            path = self.scene.render.filepath
+            if self.scene.render.use_file_extension and not path.endswith(".png"):
+                path += ".png"
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(b"fake-image")
+            self.rendered_paths.append(path)
+
+        self.bpy_mod.ops.render.render = fake_render_respects_flag
+        code, progress = self._run(snaps)
+        self.assertEqual(code, 0)
+        payload = self._read_progress(progress)
+        self.assertEqual(payload["shots"][0]["status"], "DONE")
+        self.assertTrue(os.path.exists(payload["shots"][0]["path"]))
+
     def test_old_output_preserved_on_failure(self):
         """数据保护（v1.4.5）：渲染失败/未生成文件时，最终路径的旧输出文件必须保留。"""
         snaps = [self._make_snapshot("a" * 32, "shotA")]  # 模板 {name}_{frame:04d}
