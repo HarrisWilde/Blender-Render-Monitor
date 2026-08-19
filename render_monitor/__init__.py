@@ -68,6 +68,8 @@ if bpy is not None:
         data_json: StringProperty(name="快照数据", default="{}")
         status: EnumProperty(name="状态", items=_status_items(), default="PENDING")
         output_path: StringProperty(name="输出文件", default="")
+        error: StringProperty(name="错误信息", default="",
+                              description="最近一次渲染失败的原因")
         # 渲染勾选：默认全部勾选，「渲染勾选」只渲染勾选的快照
         selected: BoolProperty(name="渲染", default=True,
                                description="勾选后参与「渲染勾选」；用列表上方的全选/全不选/反选批量设置")

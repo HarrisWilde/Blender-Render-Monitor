@@ -30,6 +30,7 @@ import os
 import struct
 import sys
 import time
+import traceback
 
 # rm_job.py 以独立脚本方式被 blender -P 执行（无包上下文），
 # 需要先把插件包父目录加入 sys.path 才能绝对导入 render_monitor 子模块。
@@ -337,6 +338,8 @@ def _main():
         except Exception as exc:  # noqa: BLE001
             entry["status"] = "FAILED"
             entry["error"] = str(exc)
+            # 完整 traceback 写 stderr：勾选「输出渲染日志」时可排查
+            traceback.print_exc(file=sys.stderr)
             # 清理本次渲染残留的临时文件；绝不触碰最终路径的旧文件
             try:
                 if actual_path and os.path.exists(actual_path):

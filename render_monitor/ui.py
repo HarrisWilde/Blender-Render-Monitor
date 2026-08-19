@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import textwrap
 
 import bpy
 from bpy.types import Panel, UIList
@@ -13,6 +14,17 @@ _STATUS_ICONS = {
     "DONE": "CHECKMARK",
     "FAILED": "ERROR",
 }
+
+
+def _draw_wrapped(layout, text, icon="NONE", width=60, max_lines=6):
+    """按宽度把长文本折行绘制，避免错误信息在面板里被截断。"""
+    lines = []
+    for raw_line in str(text).splitlines():
+        lines.extend(textwrap.wrap(raw_line, width=width) or [""])
+    for line in lines[:max_lines]:
+        layout.label(text=line, icon=icon)
+    if len(lines) > max_lines:
+        layout.label(text=f"…（共 {len(lines)} 行，请查看渲染日志）", icon=icon)
 
 
 class RM_UL_shots(UIList):
@@ -159,7 +171,10 @@ class RM_PT_panel(Panel):
         if shot is not None and shot.status == "DONE" and shot.output_path:
             box.label(text="输出：" + shot.output_path, icon="FILE_TICK")
         elif shot is not None and shot.status == "FAILED":
-            box.label(text="上次渲染失败", icon="ERROR")
+            box.label(text="渲染失败", icon="ERROR")
+            error = getattr(shot, "error", "")
+            if error:
+                _draw_wrapped(box, error, icon="ERROR")
         if shot is not None:
             # 旧版快照（无视图层数据）提醒重新捕获
             try:

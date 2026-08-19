@@ -150,6 +150,9 @@ def _update_ui_from_progress(payload):
             continue
         shot.status = s["status"]
         shot.output_path = s.get("path", "")
+        # 渲染失败原因随进度实时回传，选中失败快照时在面板直接显示
+        if hasattr(shot, "error"):
+            shot.error = s.get("error") or ""
         if s["status"] == "DONE":
             done += 1
         elif s["status"] == "FAILED":
@@ -231,8 +234,12 @@ def _finish_session(returncode, cancelled=False):
                 continue
             if shot.status == "RENDERING":
                 shot.status = "FAILED"
+                if getattr(shot, "error", None) in (None, ""):
+                    shot.error = "渲染进程异常退出，该快照被中断"
             elif shot.status == "PENDING" and crashed_early:
                 shot.status = "FAILED"
+                if getattr(shot, "error", None) in (None, ""):
+                    shot.error = "渲染进程在开始前异常退出"
 
     # 从场景快照本身按本次队列统计真实完成/失败数，保证计数与状态一致。
     # 不依赖进度文件的 shots：崩溃时可能过时，致命错误时还含 uid="" 的假条目。
@@ -260,6 +267,19 @@ def _finish_session(returncode, cancelled=False):
         scene.rm_render_remaining = ""
 
     if not cancelled:
+        # 收集子进程回传的失败原因（含致命错误的 uid="" 假条目），
+        # 让「渲染完成」消息直接带上错误，用户无需再勾选日志排查。
+        errors = []
+        if payload:
+            for s in payload.get("shots", []):
+                err = (s.get("error") or "").strip()
+                if not err:
+                    continue
+                label = s.get("name") or s.get("uid") or "未知快照"
+                if not s.get("uid"):  # 子进程致命错误（整批未跑起来）
+                    errors.insert(0, f"致命错误: {err}")
+                else:
+                    errors.append(f"{label}: {err}")
         log_hint = ""
         if _active["log_path"]:  # 仅勾选了「输出渲染日志」时提示路径
             if returncode != 0:
@@ -269,8 +289,26 @@ def _finish_session(returncode, cancelled=False):
             else:
                 log_hint = f"（日志：{_active['log_path']}）"
         elif returncode != 0:
-            log_hint = f"（渲染进程异常退出，代码 {returncode}）"
-        msg = f"渲染完成：成功 {done}，失败 {failed} {log_hint}".strip()
+            if errors:
+                log_hint = f"（渲染进程异常退出，代码 {returncode}）"
+            else:
+                log_hint = (
+                    f"（渲染进程异常退出，代码 {returncode}，无错误详情，"
+                    "建议勾选「输出渲染日志」后重试）"
+                )
+        msg = f"渲染完成：成功 {done}，失败 {failed}"
+        if errors:
+            # 去重保序，最多展示前 3 条，避免消息过长
+            seen = set()
+            uniq_errors = []
+            for e in errors:
+                if e not in seen:
+                    seen.add(e)
+                    uniq_errors.append(e)
+            msg += "；" + "；".join(uniq_errors[:3])
+            if len(uniq_errors) > 3:
+                msg += f"（还有 {len(uniq_errors) - 3} 条错误，选中失败快照查看）"
+        msg = f"{msg} {log_hint}".strip()
         if scene is not None:
             scene.rm_last_message = msg
         print(f"[Render Monitor] {msg}")
@@ -538,6 +576,8 @@ class RM_OT_update(bpy.types.Operator):
         shot.data_json = json.dumps(core.capture_scene_state(scene), ensure_ascii=False)
         shot.status = "PENDING"
         shot.output_path = ""
+        if hasattr(shot, "error"):
+            shot.error = ""
         self.report({"INFO"}, f"已更新快照「{shot.name}」")
         return {"FINISHED"}
 

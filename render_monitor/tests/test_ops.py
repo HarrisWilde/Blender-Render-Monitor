@@ -35,6 +35,7 @@ class MockShot:
         self.status = status
         self.selected = selected
         self.output_path = ""
+        self.error = ""
         self.data_json = json.dumps(
             {
                 "version": 2,
@@ -373,6 +374,7 @@ class TestOpsExportIndex(unittest.TestCase):
             self.ops._finish_session(1, cancelled=False)
         self.assertEqual([s.status for s in shots], ["FAILED", "FAILED"])
         self.assertEqual(self.scene.rm_render_failed, 2)
+        self.assertIn("boom", self.scene.rm_last_message)
 
     def test_finish_session_cancelled_keeps_state_but_resets_progress(self):
         """用户主动停止（cancelled=True）：不把当前张标失败，但进度属性重置。"""
@@ -393,6 +395,20 @@ class TestOpsExportIndex(unittest.TestCase):
         self.ops._active.update(scene_name="Scene", total=5)
         self.ops._update_ui_from_progress({"state": "error", "total": 0, "shots": []})
         self.assertEqual(self.scene.rm_render_total, 5)
+
+    def test_update_ui_propagates_shot_error(self):
+        """渲染失败原因从子进程进度回传后，写入对应快照的 error 字段。"""
+        shot = MockShot("d" * 32, "shotD")
+        self.scene.rm_shots = MockShotList([shot])
+        self.ops._active.update(scene_name="Scene", total=1)
+        self.ops._update_ui_from_progress({
+            "state": "done", "total": 1, "shots": [
+                {"uid": shot.uid, "name": shot.name, "status": "FAILED",
+                 "path": "", "error": "mock render boom"},
+            ],
+        })
+        self.assertEqual(shot.status, "FAILED")
+        self.assertEqual(shot.error, "mock render boom")
 
 
 if __name__ == "__main__":
