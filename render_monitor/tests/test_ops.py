@@ -63,13 +63,11 @@ class MockShotList:
     def __len__(self):
         return len(self._shots)
 
-    def clear(self):
-        self._shots.clear()
-
-    def add(self):
-        shot = MockShot("", "")
-        self._shots.append(shot)
-        return shot
+    def move(self, from_index, to_index):
+        self._shots[from_index], self._shots[to_index] = (
+            self._shots[to_index],
+            self._shots[from_index],
+        )
 
 
 class TestOpsExportIndex(unittest.TestCase):

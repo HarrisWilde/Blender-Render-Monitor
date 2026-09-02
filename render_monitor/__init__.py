@@ -16,7 +16,7 @@ from __future__ import annotations
 bl_info = {
     "name": "Render Monitor 渲染监视器",
     "author": "Render Monitor Contributors",
-    "version": (1, 5, 6),
+    "version": (1, 5, 7),
     "blender": (4, 2, 0),
     "location": "3D Viewport > Sidebar (N) > Render Monitor",
     "description": "把场景状态记录为快照并批量后台渲染，类似 KeyShot 的 Render Monitor",
