@@ -63,6 +63,14 @@ class MockShotList:
     def __len__(self):
         return len(self._shots)
 
+    def clear(self):
+        self._shots.clear()
+
+    def add(self):
+        shot = MockShot("", "")
+        self._shots.append(shot)
+        return shot
+
 
 class TestOpsExportIndex(unittest.TestCase):
     @classmethod
@@ -230,6 +238,38 @@ class TestOpsExportIndex(unittest.TestCase):
         # 不存在的 uid 静默跳过，不报错
         op.uid = "0" * 32
         self.assertEqual(op.execute(self._context()), {"FINISHED"})
+
+    def test_move_shot_preserves_data_and_active_index(self):
+        """上移/下移必须完整保留快照数据（包括 error），并更新活动索引。"""
+        shots = self.scene.rm_shots._shots
+        shots[0].error = "旧错误"
+        shots[1].selected = False
+        self.scene.rm_shots_active = 1
+
+        # 下移第 2 个 → 顺序 [A, C, B, D, E]
+        self.assertTrue(self.ops._move_shot(self.scene, 1, 1))
+        self.assertEqual(self.scene.rm_shots_active, 2)
+        self.assertEqual(
+            [s.name for s in self.scene.rm_shots._shots],
+            ["shotA", "shotC", "shotB", "shotD", "shotE"],
+        )
+        self.assertEqual(self.scene.rm_shots._shots[2].error, "")
+
+        # 上移第 3 个（原 shotB）回到第 2 位
+        self.assertTrue(self.ops._move_shot(self.scene, 2, -1))
+        self.assertEqual(self.scene.rm_shots_active, 1)
+        self.assertEqual(
+            [s.name for s in self.scene.rm_shots._shots],
+            ["shotA", "shotB", "shotC", "shotD", "shotE"],
+        )
+
+        # 再上移第 2 个到顶部，error 字段也必须跟着原快照走
+        self.assertTrue(self.ops._move_shot(self.scene, 1, -1))
+        self.assertEqual(
+            [s.name for s in self.scene.rm_shots._shots],
+            ["shotB", "shotA", "shotC", "shotD", "shotE"],
+        )
+        self.assertEqual(self.scene.rm_shots._shots[1].error, "旧错误")
 
     def test_index_is_list_position_for_single_selection(self):
         """「渲染当前」单张时，index = 该快照在列表中的位置。"""

@@ -656,15 +656,32 @@ def _move_shot(scene, idx, direction):
     new_idx = idx + direction
     if not (0 <= idx < n and 0 <= new_idx < n):
         return False
-    shots = list(scene.rm_shots)
+    # 先把数据完整拷成普通字典。不能先 clear() 再读原 CollectionProperty 的
+    # 引用：Blender 中 clear 后旧引用会变成默认值，导致上移/下移丢数据。
+    shots = []
+    for s in scene.rm_shots:
+        shots.append({
+            "uid": s.uid,
+            "name": s.name,
+            "data_json": s.data_json,
+            "status": s.status,
+            "output_path": s.output_path,
+            "error": getattr(s, "error", ""),
+            "selected": s.selected,
+        })
     shots[idx], shots[new_idx] = shots[new_idx], shots[idx]
     # CollectionProperty 不支持直接交换，用重建方式
     scene.rm_shots.clear()
-    for s in shots:
+    for data in shots:
         new = scene.rm_shots.add()
-        new.uid, new.name, new.data_json = s.uid, s.name, s.data_json
-        new.status, new.output_path = s.status, s.output_path
-        new.selected = s.selected
+        new.uid = data["uid"]
+        new.name = data["name"]
+        new.data_json = data["data_json"]
+        new.status = data["status"]
+        new.output_path = data["output_path"]
+        if hasattr(new, "error"):
+            new.error = data["error"]
+        new.selected = data["selected"]
     scene.rm_shots_active = new_idx
     return True
 
