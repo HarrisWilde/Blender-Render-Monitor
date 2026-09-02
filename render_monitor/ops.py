@@ -530,11 +530,11 @@ class RM_OT_capture(bpy.types.Operator):
             _capture_dialog_operator = None
 
     def draw(self, context):
-        # 名称输入框左右加 +/-：逻辑与 Blender 文件保存框一致，
+        # 名称输入框右侧放 - +：逻辑与 Blender 文件保存框一致，
         # 调整名称扩展名之前末尾的数字（保留前导零，减号不会降到负数）。
         row = self.layout.row(align=True)
-        row.operator("rm.shot_name_number", text="", icon="REMOVE").delta = -1
         row.prop(self, "shot_name", text="")
+        row.operator("rm.shot_name_number", text="", icon="REMOVE").delta = -1
         row.operator("rm.shot_name_number", text="", icon="ADD").delta = 1
 
     def execute(self, context):
