@@ -10,3 +10,7 @@ reference/
 
 # 构建产物（可从 render_monitor/ 源码重新打包）
 render_monitor.zip
+
+# 本地打包脚本（随个人工作流使用，不纳入版本库）
+build.ps1
+build.bat
