@@ -44,15 +44,18 @@ def sanitize_relative_path(path: str) -> str:
 
 # 匹配文件名扩展名之前最末尾的一段连续数字，例如 "快照_001" 中的 "001"
 _TRAILING_NUMBER_RE = re.compile(r"(\d+)$")
+# 纯数字“扩展名”（例如 "快照.1" 的 ".1"）：应视为数字后缀而不是文件扩展名
+_NUMERIC_EXT_RE = re.compile(r"\.[0-9]+$")
 
 
 def adjust_name_number(name: str, delta: int) -> str:
     """像 Blender 文件保存框的 +/- 按钮那样调整名称末尾的数字。
 
-    若名称在扩展名之前已有数字（例如 "快照_001"），则对这段数字加/减，
-    并尽量保留原有前导零位数；若没有数字，则在名称末尾追加 0/1/2……。
+    若名称在扩展名之前已有数字（例如 "快照_001"），则对这段数字加/减；
+    "快照.1" 这类末尾是纯数字的也会视为数字后缀而不是扩展名，按 "快照.2"
+    递增。并尽量保留原有前导零位数；若没有数字，则在名称末尾追加 0/1/2……。
     与 Blender 的 FILE_OT_filenum 逻辑保持一致：减少时跨过 100→99、10→9
-    会自然减少一位前导零；当 `快照1` 再减时会去掉数字变回 `快照`，且结果
+    会自然减少一位前导零；当 `快照1` 或 `快照.1` 再减时会去掉数字，且结果
     不会小于 0。
     """
     if not name:
@@ -63,18 +66,26 @@ def adjust_name_number(name: str, delta: int) -> str:
         return name
 
     base, ext = os.path.splitext(name)
-    match = _TRAILING_NUMBER_RE.search(base)
-    if match:
-        head = base[:match.start()]
-        digits = match.group(1)
+    if _NUMERIC_EXT_RE.fullmatch(ext or ""):
+        # "快照.1" 这类名称：.1 是数字后缀，不是扩展名
+        head = base + "."
+        digits = ext[1:]
         pic = int(digits)
         num_len = len(digits)
-        tail = ext
+        tail = ""
     else:
-        head = base
-        pic = 0
-        num_len = 0
-        tail = ext
+        match = _TRAILING_NUMBER_RE.search(base)
+        if match:
+            head = base[:match.start()]
+            digits = match.group(1)
+            pic = int(digits)
+            num_len = len(digits)
+            tail = ext
+        else:
+            head = base
+            pic = 0
+            num_len = 0
+            tail = ext
 
     # 从 100 减到 99 / 从 10 减到 9 时，去掉多余的前导零位数
     if delta < 0 and num_len > 0:
@@ -93,6 +104,9 @@ def adjust_name_number(name: str, delta: int) -> str:
     else:
         # 等价于 C 的 printf("%.0d", 0)：宽度 0 且值为 0 时不输出数字
         number = ""
+    # 数字被完全移除时，顺带去掉分隔点：快照.1 → 快照，shot.1.png → shot.png
+    if not number and head.endswith("."):
+        head = head[:-1]
     return head + number + tail
 
 

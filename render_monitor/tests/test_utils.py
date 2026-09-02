@@ -83,6 +83,15 @@ class TestAdjustNameNumber(unittest.TestCase):
         self.assertEqual(adjust_name_number("shot.001.png", 1), "shot.002.png")
         self.assertEqual(adjust_name_number("shot.png", 1), "shot1.png")
 
+    def test_dot_numeric_suffix(self):
+        # 快照.1 的 .1 应作为数字后缀，而不是扩展名
+        self.assertEqual(adjust_name_number("快照.1", 1), "快照.2")
+        self.assertEqual(adjust_name_number("快照.001", 1), "快照.002")
+        self.assertEqual(adjust_name_number("快照.1", -1), "快照")
+        self.assertEqual(adjust_name_number("快照.1.png", -1), "快照.png")
+        self.assertEqual(adjust_name_number("sub/快照.1", 1), "sub/快照.2")
+
+
 
 class TestFormatFilename(unittest.TestCase):
     def test_default_template(self):
