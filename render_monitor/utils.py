@@ -23,6 +23,25 @@ def sanitize_filename(name: str) -> str:
     return cleaned[:120]
 
 
+def sanitize_relative_path(path: str) -> str:
+    """把名称/模板路径清洗成安全的相对路径，保留 `/` 作为子文件夹分隔。
+
+    `\\` 也会先归一化为 `/`；每个路径段单独做文件名清洗，因此 `..`、空段、
+    绝对路径等都不会逃出输出目录。返回的路径统一使用 `/` 分隔。
+    """
+    if not path:
+        return "shot"
+    normalized = str(path).replace("\\", "/")
+    parts = []
+    for part in normalized.split("/"):
+        clean = sanitize_filename(part)
+        if clean not in ("", "."):
+            parts.append(clean)
+    if not parts:
+        return "shot"
+    return "/".join(parts)
+
+
 # 匹配文件名扩展名之前最末尾的一段连续数字，例如 "快照_001" 中的 "001"
 _TRAILING_NUMBER_RE = re.compile(r"(\d+)$")
 
@@ -33,7 +52,8 @@ def adjust_name_number(name: str, delta: int) -> str:
     若名称在扩展名之前已有数字（例如 "快照_001"），则对这段数字加/减，
     并尽量保留原有前导零位数；若没有数字，则在名称末尾追加 0/1/2……。
     与 Blender 的 FILE_OT_filenum 逻辑保持一致：减少时跨过 100→99、10→9
-    会自然减少一位前导零，且结果不会小于 0。
+    会自然减少一位前导零；当 `快照1` 再减时会去掉数字变回 `快照`，且结果
+    不会小于 0。
     """
     if not name:
         return name
@@ -68,17 +88,21 @@ def adjust_name_number(name: str, delta: int) -> str:
 
     if num_len:
         number = str(pic).zfill(num_len)
-    else:
+    elif pic:
         number = str(pic)
+    else:
+        # 等价于 C 的 printf("%.0d", 0)：宽度 0 且值为 0 时不输出数字
+        number = ""
     return head + number + tail
 
 
 def format_filename(template: str, shot_name: str, frame: int, index: int = 1) -> str:
-    """按模板生成输出文件名（不含扩展名）。
+    """按模板生成输出文件名（不含扩展名，可含子文件夹相对路径）。
 
     模板支持 {name}（快照名）、{index}（列表顺序，从 1 开始）、{frame}（帧号）
-    占位符。模板缺少任何动态占位符（会导致所有快照输出同名互相覆盖）或格式
-    错误时，自动回退默认模板，保证返回安全文件名。
+    占位符。快照名里的 `/` 或 `\\` 会作为子文件夹分隔符保留；模板缺少任何
+    动态占位符（会导致所有快照输出同名互相覆盖）或格式错误时，自动回退默认
+    模板，保证返回安全相对路径。
     """
     tpl = (template or DEFAULT_FILE_TEMPLATE).strip()
     if "{name}" not in tpl and "{frame}" not in tpl and "{index}" not in tpl:
@@ -90,19 +114,20 @@ def format_filename(template: str, shot_name: str, frame: int, index: int = 1) -
         index = int(index)
     except (TypeError, ValueError):
         frame = index = 0
+    safe_name = sanitize_relative_path(shot_name)
     try:
         raw = tpl.format(
-            name=sanitize_filename(shot_name),
+            name=safe_name,
             frame=frame,
             index=index,
         )
     except (KeyError, IndexError, ValueError, AttributeError):
         raw = DEFAULT_FILE_TEMPLATE.format(
-            name=sanitize_filename(shot_name),
+            name=safe_name,
             frame=frame,
             index=index,
         )
-    return sanitize_filename(raw)
+    return sanitize_relative_path(raw)
 
 
 def build_output_path(outdir_abs: str, filename: str, ext: str) -> str:

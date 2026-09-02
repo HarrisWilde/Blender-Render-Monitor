@@ -49,10 +49,10 @@ class TestAdjustNameNumber(unittest.TestCase):
         self.assertEqual(adjust_name_number("快照", 1), "快照1")
         self.assertEqual(adjust_name_number("快照", 2), "快照2")
 
-    def test_decrement_without_number_clamps_to_zero(self):
-        # Blender 文件保存框的 - 在无数字时也不会变成负数
-        self.assertEqual(adjust_name_number("快照", -1), "快照0")
-        self.assertEqual(adjust_name_number("快照", -5), "快照0")
+    def test_decrement_without_number_keeps_name(self):
+        # Blender 文件保存框的 - 在无数字时保持原名，不产生负数
+        self.assertEqual(adjust_name_number("快照", -1), "快照")
+        self.assertEqual(adjust_name_number("快照", -5), "快照")
 
     def test_increment_plain_number(self):
         self.assertEqual(adjust_name_number("快照1", 1), "快照2")
@@ -60,6 +60,7 @@ class TestAdjustNameNumber(unittest.TestCase):
 
     def test_decrement_plain_number(self):
         self.assertEqual(adjust_name_number("快照10", -1), "快照9")
+        self.assertEqual(adjust_name_number("快照1", -1), "快照")
         self.assertEqual(adjust_name_number("快照0", -1), "快照0")
 
     def test_preserves_leading_zero_width(self):
@@ -72,6 +73,11 @@ class TestAdjustNameNumber(unittest.TestCase):
         self.assertEqual(adjust_name_number("快照100", -1), "快照99")
         self.assertEqual(adjust_name_number("快照010", -1), "快照009")
         self.assertEqual(adjust_name_number("快照10", -1), "快照9")
+
+    def test_decrement_from_one_removes_number(self):
+        # 与 Blender 一致：1 再减会去掉数字本身
+        self.assertEqual(adjust_name_number("快照1", -1), "快照")
+        self.assertEqual(adjust_name_number("sub/快照1", -1), "sub/快照")
 
     def test_increment_preserves_extension(self):
         self.assertEqual(adjust_name_number("shot.001.png", 1), "shot.002.png")
@@ -97,7 +103,26 @@ class TestFormatFilename(unittest.TestCase):
         )
 
     def test_unsafe_name_sanitized(self):
-        self.assertEqual(format_filename("{name}", "a/b:c", 1, index=1), "a_b_c")
+        # 斜杠作为子文件夹分隔保留，段内非法字符仍被清洗
+        self.assertEqual(format_filename("{name}", "a/b:c", 1, index=1), "a/b_c")
+
+    def test_name_subfolder_with_slash_or_backslash(self):
+        # 快照名里的 / 和 \ 都识别为子文件夹，输出统一用 / 分隔
+        self.assertEqual(
+            format_filename("{name}", "镜头1/快照001", 1, index=1),
+            "镜头1/快照001",
+        )
+        self.assertEqual(
+            format_filename("{name}", "镜头1\\快照001", 1, index=1),
+            "镜头1/快照001",
+        )
+
+    def test_name_subfolder_blocks_traversal(self):
+        # 防止 .. 或绝对路径逃出输出目录：路径段会被单独清洗
+        self.assertEqual(
+            format_filename("{name}", "../secret", 1, index=1),
+            "shot/secret",
+        )
 
     def test_bad_template_falls_back(self):
         # 缺 {name}/{frame}/{index} 占位符 → 回退默认模板

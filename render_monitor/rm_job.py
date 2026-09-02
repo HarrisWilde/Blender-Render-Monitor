@@ -282,7 +282,7 @@ def _main():
                 template, shot["name"], scene.frame_current, shot_index
             )
             path = utils.build_output_path(outdir, filename, ext)
-            os.makedirs(outdir, exist_ok=True)
+            os.makedirs(os.path.dirname(path) or outdir, exist_ok=True)
             # 渲染保护：绝不预先删除旧输出文件——渲染失败/取消时保留上一次的
             # 成功输出，避免误删用户已渲染的图。渲染到唯一临时文件，成功后
             # 原子替换（os.replace）到最终路径。

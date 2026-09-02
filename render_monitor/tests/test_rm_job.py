@@ -171,6 +171,17 @@ class TestRmJob(unittest.TestCase):
         self.assertTrue(paths[0].endswith("shotA_1.png"), paths[0])
         self.assertTrue(paths[1].endswith("shotB_2.png"), paths[1])
 
+    def test_name_subfolder_creates_output_directory(self):
+        # 快照名里的 / 会作为子文件夹，渲染时自动创建对应目录
+        snaps = [self._make_snapshot("a" * 32, "镜头1/快照001")]
+        code, progress = self._run(snaps, template="{name}")
+        self.assertEqual(code, 0)
+        payload = self._read_progress(progress)
+        self.assertEqual(payload["shots"][0]["status"], "DONE")
+        path = payload["shots"][0]["path"]
+        self.assertTrue(path.replace("\\", "/").endswith("镜头1/快照001.png"), path)
+        self.assertTrue(os.path.exists(path), path)
+
     def test_one_failure_continues(self):
         snaps = [self._make_snapshot("a" * 32, "shotA"), self._make_snapshot("b" * 32, "shotB")]
         # 仅第一张渲染失败，第二张应正常渲染
