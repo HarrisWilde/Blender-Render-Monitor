@@ -132,6 +132,7 @@ class TestOpsExportIndex(unittest.TestCase):
             process=None, scene_name="", tmpdir="", progress_path="",
             log_path="", total=0, uids=[],
         )
+        self.ops._capture_dialog_operator = None
 
     def _context(self):
         return SimpleNamespace(
@@ -409,6 +410,30 @@ class TestOpsExportIndex(unittest.TestCase):
         })
         self.assertEqual(shot.status, "FAILED")
         self.assertEqual(shot.error, "mock render boom")
+
+    def test_name_number_helper_uses_active_operator(self):
+        """捕获弹窗里的 + 按钮直接修改当前 active_operator 的 shot_name。"""
+        capture_op = SimpleNamespace(shot_name="快照001")
+        op = self.ops.RM_OT_shot_name_number()
+        op.delta = 1
+        ctx = SimpleNamespace(active_operator=capture_op, area=None)
+        self.assertEqual(op.execute(ctx), {"FINISHED"})
+        self.assertEqual(capture_op.shot_name, "快照002")
+
+        op.delta = -1
+        self.assertEqual(op.execute(ctx), {"FINISHED"})
+        self.assertEqual(capture_op.shot_name, "快照001")
+
+    def test_name_number_helper_falls_back_to_dialog_operator(self):
+        """某些情况下 active_operator 可能指向按钮自身，使用 invoke 时保存的引用兜底。"""
+        dialog_op = SimpleNamespace(shot_name="快照")
+        self.ops._capture_dialog_operator = dialog_op
+        # active_operator 不是捕获弹窗操作符（例如是按钮操作符本身）
+        ctx = SimpleNamespace(active_operator=SimpleNamespace(delta=0), area=None)
+        op = self.ops.RM_OT_shot_name_number()
+        op.delta = 1
+        self.assertEqual(op.execute(ctx), {"FINISHED"})
+        self.assertEqual(dialog_op.shot_name, "快照1")
 
 
 if __name__ == "__main__":

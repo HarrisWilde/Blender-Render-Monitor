@@ -23,6 +23,56 @@ def sanitize_filename(name: str) -> str:
     return cleaned[:120]
 
 
+# 匹配文件名扩展名之前最末尾的一段连续数字，例如 "快照_001" 中的 "001"
+_TRAILING_NUMBER_RE = re.compile(r"(\d+)$")
+
+
+def adjust_name_number(name: str, delta: int) -> str:
+    """像 Blender 文件保存框的 +/- 按钮那样调整名称末尾的数字。
+
+    若名称在扩展名之前已有数字（例如 "快照_001"），则对这段数字加/减，
+    并尽量保留原有前导零位数；若没有数字，则在名称末尾追加 0/1/2……。
+    与 Blender 的 FILE_OT_filenum 逻辑保持一致：减少时跨过 100→99、10→9
+    会自然减少一位前导零，且结果不会小于 0。
+    """
+    if not name:
+        return name
+    try:
+        delta = int(delta)
+    except (TypeError, ValueError):
+        return name
+
+    base, ext = os.path.splitext(name)
+    match = _TRAILING_NUMBER_RE.search(base)
+    if match:
+        head = base[:match.start()]
+        digits = match.group(1)
+        pic = int(digits)
+        num_len = len(digits)
+        tail = ext
+    else:
+        head = base
+        pic = 0
+        num_len = 0
+        tail = ext
+
+    # 从 100 减到 99 / 从 10 减到 9 时，去掉多余的前导零位数
+    if delta < 0 and num_len > 0:
+        exp = 10 ** (num_len - 1)
+        if pic >= exp and pic + delta < exp:
+            num_len -= 1
+
+    pic += delta
+    if pic < 0:
+        pic = 0
+
+    if num_len:
+        number = str(pic).zfill(num_len)
+    else:
+        number = str(pic)
+    return head + number + tail
+
+
 def format_filename(template: str, shot_name: str, frame: int, index: int = 1) -> str:
     """按模板生成输出文件名（不含扩展名）。
 

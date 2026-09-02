@@ -10,6 +10,7 @@ import unittest
 
 from ..utils import (
     DEFAULT_FILE_TEMPLATE,
+    adjust_name_number,
     build_output_path,
     compute_tile_weights,
     format_duration,
@@ -40,6 +41,41 @@ class TestSanitizeFilename(unittest.TestCase):
 
     def test_length_limited(self):
         self.assertEqual(len(sanitize_filename("x" * 300)), 120)
+
+
+
+class TestAdjustNameNumber(unittest.TestCase):
+    def test_increment_without_number(self):
+        self.assertEqual(adjust_name_number("快照", 1), "快照1")
+        self.assertEqual(adjust_name_number("快照", 2), "快照2")
+
+    def test_decrement_without_number_clamps_to_zero(self):
+        # Blender 文件保存框的 - 在无数字时也不会变成负数
+        self.assertEqual(adjust_name_number("快照", -1), "快照0")
+        self.assertEqual(adjust_name_number("快照", -5), "快照0")
+
+    def test_increment_plain_number(self):
+        self.assertEqual(adjust_name_number("快照1", 1), "快照2")
+        self.assertEqual(adjust_name_number("快照9", 1), "快照10")
+
+    def test_decrement_plain_number(self):
+        self.assertEqual(adjust_name_number("快照10", -1), "快照9")
+        self.assertEqual(adjust_name_number("快照0", -1), "快照0")
+
+    def test_preserves_leading_zero_width(self):
+        self.assertEqual(adjust_name_number("快照001", 1), "快照002")
+        self.assertEqual(adjust_name_number("快照009", 1), "快照010")
+        self.assertEqual(adjust_name_number("快照010", -1), "快照009")
+
+    def test_width_reduces_when_crossing_power_of_ten(self):
+        # 与 Blender 一致：100→99 从 3 位变 2 位，10→9 从 2 位变 1 位
+        self.assertEqual(adjust_name_number("快照100", -1), "快照99")
+        self.assertEqual(adjust_name_number("快照010", -1), "快照009")
+        self.assertEqual(adjust_name_number("快照10", -1), "快照9")
+
+    def test_increment_preserves_extension(self):
+        self.assertEqual(adjust_name_number("shot.001.png", 1), "shot.002.png")
+        self.assertEqual(adjust_name_number("shot.png", 1), "shot1.png")
 
 
 class TestFormatFilename(unittest.TestCase):

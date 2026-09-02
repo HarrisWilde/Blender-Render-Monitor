@@ -93,6 +93,10 @@ _active = {
     "uids": [],               # 本次渲染队列的快照 uid（用于收尾精确统计/修正状态）
 }
 
+# 当前“捕获快照”弹窗里的操作符实例；供名称 +/- 按钮在点击时修改它的 shot_name。
+# 弹窗是模态的，普通情况下同一时间只有一个，因此模块级单引用足够。
+_capture_dialog_operator = None
+
 
 def _read_progress():
     """从文件-backed mmap 读取子进程进度（读写走页面缓存，不落盘）。
@@ -514,14 +518,27 @@ class RM_OT_capture(bpy.types.Operator):
         return "快照"
 
     def invoke(self, context, event):
+        global _capture_dialog_operator
         if not self.shot_name:
             self.shot_name = self._default_name(context)
+        _capture_dialog_operator = self
         return context.window_manager.invoke_props_dialog(self)
 
+    def cancel(self, context):
+        global _capture_dialog_operator
+        if _capture_dialog_operator is self:
+            _capture_dialog_operator = None
+
     def draw(self, context):
-        self.layout.prop(self, "shot_name")
+        # 名称输入框左右加 +/-：逻辑与 Blender 文件保存框一致，
+        # 调整名称扩展名之前末尾的数字（保留前导零，减号不会降到负数）。
+        row = self.layout.row(align=True)
+        row.operator("rm.shot_name_number", text="", icon="REMOVE").delta = -1
+        row.prop(self, "shot_name", text="")
+        row.operator("rm.shot_name_number", text="", icon="ADD").delta = 1
 
     def execute(self, context):
+        global _capture_dialog_operator
         scene = context.scene
         state = core.capture_scene_state(scene)
         shot = scene.rm_shots.add()
@@ -530,7 +547,40 @@ class RM_OT_capture(bpy.types.Operator):
         shot.data_json = json.dumps(state, ensure_ascii=False)
         shot.status = "PENDING"
         scene.rm_shots_active = len(scene.rm_shots) - 1
+        _capture_dialog_operator = None
         self.report({"INFO"}, f"已捕获快照「{shot.name}」")
+        return {"FINISHED"}
+
+
+class RM_OT_shot_name_number(bpy.types.Operator):
+    """在“捕获快照”弹窗里微调快照名称末尾的数字。"""
+
+    bl_idname = "rm.shot_name_number"
+    bl_label = "调整快照名称数字"
+    bl_description = "像 Blender 文件保存框那样增大或减小名称末尾的数字"
+    bl_options = {"REGISTER"}
+
+    delta: bpy.props.IntProperty(name="调整量", default=1)
+
+    def execute(self, context):
+        global _capture_dialog_operator
+        op = getattr(context, "active_operator", None)
+        # 点击弹窗内按钮时，active_operator 在某些版本/场景下可能指向本按钮
+        # 操作符而不是弹窗操作符，因此用 invoke 时保存的引用兜底。
+        if op is None or not hasattr(op, "shot_name"):
+            op = _capture_dialog_operator
+        if op is None or not hasattr(op, "shot_name"):
+            return {"CANCELLED"}
+        try:
+            op.shot_name = utils.adjust_name_number(op.shot_name, self.delta)
+        except (AttributeError, TypeError):
+            return {"CANCELLED"}
+        area = getattr(context, "area", None)
+        if area is not None:
+            area.tag_redraw()
+        region = getattr(context, "region", None)
+        if region is not None:
+            region.tag_redraw()
         return {"FINISHED"}
 
 
@@ -941,6 +991,7 @@ class RM_OT_diagnose(bpy.types.Operator):
 
 OPERATOR_CLASSES = (
     RM_OT_capture,
+    RM_OT_shot_name_number,
     RM_OT_apply,
     RM_OT_update,
     RM_OT_delete,
