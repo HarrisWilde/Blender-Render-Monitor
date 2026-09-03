@@ -493,6 +493,37 @@ class TestCoreStateRoundtrip(unittest.TestCase):
         bg = world1.node_tree.nodes[0]
         self.assertEqual(bg.inputs["Strength"].default_value, 1.0)
 
+    def test_new_objects_hidden_by_default(self):
+        """快照之后新建的物体在应用快照时应被隐藏（不删除）。"""
+        scene = self._build_scene()
+        state = self.core.capture_scene_state(scene)
+
+        new_obj = MockObject("LaterMesh", "MESH")
+        new_obj.location = Vector([9.0, 0.0, 0.0])
+        self.bpy_mock.data.objects.add(new_obj)
+        scene.collection.objects.append(new_obj)
+
+        self.core.apply_scene_state(scene, state)
+
+        self.assertTrue(new_obj.hide_render)
+        self.assertTrue(new_obj.hide_viewport)
+        # 快照里原有的物体仍保留在场景中，不会被误删
+        self.assertIn("Parent", [o.name for o in scene.collection.objects])
+
+    def test_new_objects_can_remain_when_disabled(self):
+        """hide_new_objects=False 时保留快照之后新建物体的可见状态。"""
+        scene = self._build_scene()
+        state = self.core.capture_scene_state(scene)
+
+        new_obj = MockObject("LaterMesh", "MESH")
+        self.bpy_mock.data.objects.add(new_obj)
+        scene.collection.objects.append(new_obj)
+
+        self.core.apply_scene_state(scene, state, hide_new_objects=False)
+
+        self.assertFalse(new_obj.hide_render)
+        self.assertFalse(new_obj.hide_viewport)
+
     def test_parent_depth_cycle_safe(self):
         """父链成环（真实场景不可能出现，纯防御）不应无限递归。"""
         objs = {

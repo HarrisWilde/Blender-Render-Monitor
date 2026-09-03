@@ -383,8 +383,12 @@ def capture_scene_state(scene, include_render=True):
     return state
 
 
-def apply_scene_state(scene, state):
-    """把快照状态恢复到场景。恢复顺序：帧 → 渲染设置 → 环境 → 集合 → 对象 → 相机。"""
+def apply_scene_state(scene, state, hide_new_objects=True):
+    """把快照状态恢复到场景。恢复顺序：帧 → 渲染设置 → 环境 → 集合 → 对象 → 相机。
+
+    hide_new_objects=True 时，会把快照中不存在的当前场景物体隐藏（不删除），
+    避免快照之后新建的物体“混入”旧快照的渲染结果/应用结果。
+    """
     if not state:
         return
 
@@ -525,6 +529,22 @@ def apply_scene_state(scene, state):
                     obj.data.use_shadow = o["light_data"]["use_shadow"]
                 except Exception:
                     pass
+
+    # 快照之后新增的物体：默认隐藏而不是删除，保证旧快照渲染/应用时不“混入”
+    # 新内容，同时保留用户后续可手动取消隐藏的非破坏性。
+    if hide_new_objects:
+        snapshot_names = {o["name"] for o in objs}
+        for obj in iter_scene_objects(scene):
+            if obj.name in snapshot_names:
+                continue
+            try:
+                obj.hide_render = True
+            except Exception:
+                pass
+            try:
+                obj.hide_viewport = True
+            except Exception:
+                pass
 
     # 活动相机（最后设置，避免被其他恢复操作影响）；
     # 快照含 camera 键时始终赋值（含 None，保证"无相机"也被还原）
