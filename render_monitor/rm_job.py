@@ -31,6 +31,7 @@ import struct
 import sys
 import time
 import traceback
+from typing import Any, TypedDict
 
 # rm_job.py 以独立脚本方式被 blender -P 执行（无包上下文），
 # 需要先把插件包父目录加入 sys.path 才能绝对导入 render_monitor 子模块。
@@ -46,7 +47,37 @@ for _name in ("render_monitor", "render_monitor.core", "render_monitor.utils"):
 from render_monitor import utils  # noqa: E402
 
 
-def _write_progress(progress_path, state, total, shots):
+class _ShotProgress(TypedDict, total=False):
+    uid: str
+    name: str
+    status: str
+    path: str
+    error: str
+    samples: int
+    samples_total: int
+    tiles_done: int
+    tiles_total: int
+    progress: float
+    phase: str
+    elapsed: float
+    remaining: float | None
+
+
+class _ProgressState(TypedDict, total=False):
+    entry: _ShotProgress | None
+    start: float | None
+    last_write: float
+    progress_path: str
+    total: int
+    shots: list[_ShotProgress]
+    tile_weights: list[float]
+    mm: mmap.mmap | None
+    mm_path: str
+
+
+def _write_progress(
+    progress_path: str, state: str, total: int, shots: list[_ShotProgress]
+) -> None:
     """把进度写入文件-backed mmap（与主进程共享内存，不落盘）。
 
     缓冲布局见 utils.PROGRESS_MMAP_SIZE 注释：先写 payload 再写长度前缀，
@@ -104,7 +135,7 @@ def _close_progress_mmap():
 
 
 # 当前正在渲染的进度状态（render_stats handler 更新，_main 设置）
-_stats = {
+_stats: _ProgressState = {
     "entry": None,       # 正在渲染的 shots 条目（dict）
     "start": None,       # 当前张开始时刻 time.monotonic()
     "last_write": 0.0,   # 上次写进度文件的时间，用于节流
@@ -117,7 +148,7 @@ _stats = {
 }
 
 
-def _on_render_stats(stats_str):
+def _on_render_stats(stats_str: str):
     """render_stats 回调：把当前张的采样/已用/剩余时间写进进度 JSON。
 
     该回调在渲染期间（含初始化阶段）被多次调用，字段缺什么更新什么；
@@ -213,17 +244,23 @@ def _main():
     from render_monitor import core, utils  # noqa: F401
 
     # 渲染期间实时回传采样/已用/剩余时间（render_stats 在后台渲染同样触发）
-    bpy.app.handlers.render_stats.append(_on_render_stats)
+    # render_stats 回调签名在 fake-bpy stubs 里被标成 Scene，实际收到的
+    # 是统计文本；这里以插件实际用法为准。
+    bpy.app.handlers.render_stats.append(_on_render_stats)  # ty: ignore[invalid-argument-type]
 
-    scene = bpy.data.scenes.get(scene_name) or bpy.context.scene
+    scene = bpy.data.scenes.get(scene_name)
+    if scene is None:
+        scene = bpy.context.scene
+    if scene is None:
+        raise RuntimeError(f"无法定位场景: {scene_name}")
     with open(snapshots_path, encoding="utf-8") as f:
-        snapshots = json.load(f)
+        snapshots: list[dict[str, Any]] = json.load(f)
 
-    shots = []
+    shots: list[_ShotProgress] = []
     for i, shot in enumerate(snapshots):
-        entry = {
-            "uid": shot["uid"],
-            "name": shot["name"],
+        entry: _ShotProgress = {
+            "uid": str(shot["uid"]),
+            "name": str(shot["name"]),
             "status": "PENDING",
             "path": "",
             "error": "",

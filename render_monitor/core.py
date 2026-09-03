@@ -11,8 +11,8 @@ try:
     import bpy
     from mathutils import Matrix, Vector
 except ImportError:  # 非 Blender 环境（如单元测试）下允许导入模块
-    bpy = None
-    Matrix = Vector = None
+    bpy = None  # ty: ignore[invalid-assignment]
+    Matrix = Vector = None  # ty: ignore[invalid-assignment]
 
 # 快照格式版本
 # v2: 新增 view_layers（集合 exclude 开关）与 active_view_layer 记录
@@ -174,6 +174,7 @@ def apply_world(scene, state):
     """
     if not state:
         return
+    assert Vector is not None
     world = bpy.data.worlds.get(state["name"])
     if world is None:
         return
@@ -257,6 +258,7 @@ def _apply_rotation(obj, o):
     rot = o.get("rotation")
     if rot is None:
         return
+    assert Vector is not None
     if mode == "QUATERNION":
         obj.rotation_quaternion = Vector(rot)
     elif mode == "AXIS_ANGLE":
@@ -391,6 +393,8 @@ def apply_scene_state(scene, state, hide_new_objects=True):
     """
     if not state:
         return
+    assert Matrix is not None
+    assert Vector is not None
 
     if "frame_current" in state:
         try:

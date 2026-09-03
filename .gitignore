@@ -2,6 +2,9 @@
 __pycache__/
 *.pyc
 
+# uv virtual environment
+.venv/
+
 # Reasonix 工具内部数据（会话、附件等）
 .reasonix/
 

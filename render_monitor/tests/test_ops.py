@@ -21,6 +21,7 @@ import tempfile
 import types
 import unittest
 from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 
 from .test_core import Matrix, MockData, MockNamedCollection, MockScene, Vector  # noqa: F401
@@ -70,29 +71,61 @@ class MockShotList:
         )
 
 
+class MockSceneOps(MockScene):
+    """在通用 MockScene 上补充 Render Monitor 动态注册的 Scene 属性。"""
+
+    def __init__(self, name="Scene"):
+        super().__init__(name)
+        self.rm_shots = MockShotList([])
+        self.rm_shots_active = 0
+        self.rm_output_dir = ""
+        self.rm_file_template = ""
+        self.rm_use_snapshot_frame = True
+        self.rm_write_log = False
+        self.rm_render_done = 0
+        self.rm_render_failed = 0
+        self.rm_render_total = 0
+        self.rm_render_current = ""
+        self.rm_render_samples = ""
+        self.rm_render_samples_cur = 0
+        self.rm_render_samples_total = 0
+        self.rm_render_tiles_done = 0
+        self.rm_render_tiles_total = 1
+        self.rm_render_progress = 0.0
+        self.rm_render_phase = ""
+        self.rm_render_time = ""
+        self.rm_render_remaining = ""
+        self.rm_last_message = ""
+
+
 class TestOpsExportIndex(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # 注入 mock 模块，使 ops.py 的 import bpy/mathutils 成功
         math = types.ModuleType("mathutils")
-        math.Vector = Vector
-        math.Matrix = Matrix
+        setattr(math, "Vector", Vector)
+        setattr(math, "Matrix", Matrix)
         sys.modules["mathutils"] = math
 
         bpy_mod = types.ModuleType("bpy")
         # ops.py 的 Operator 子类在模块加载时求值基类表达式
-        bpy_mod.types = SimpleNamespace(Operator=type("Operator", (), {}))
-        bpy_mod.app = SimpleNamespace(
-            binary_path="C:/fake/blender.exe",
-            timers=SimpleNamespace(
-                is_registered=lambda *a, **k: False,
-                register=lambda *a, **k: None,
+        setattr(bpy_mod, "types", SimpleNamespace(Operator=type("Operator", (), {})))
+        setattr(
+            bpy_mod,
+            "app",
+            SimpleNamespace(
+                binary_path="C:/fake/blender.exe",
+                timers=SimpleNamespace(
+                    is_registered=lambda *a, **k: False,
+                    register=lambda *a, **k: None,
+                ),
             ),
         )
-        bpy_mod.data = MockData()
-        bpy_mod.data.filepath = "C:/fake/project.blend"
-        bpy_mod.path = SimpleNamespace(abspath=lambda p: p)
-        bpy_mod.ops = SimpleNamespace(wm=SimpleNamespace())
+        data = MockData()
+        setattr(data, "filepath", "C:/fake/project.blend")
+        setattr(bpy_mod, "data", data)
+        setattr(bpy_mod, "path", SimpleNamespace(abspath=lambda p: p))
+        setattr(bpy_mod, "ops", SimpleNamespace(wm=SimpleNamespace()))
 
         def fake_save(filepath, copy=True):
             os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
@@ -102,9 +135,13 @@ class TestOpsExportIndex(unittest.TestCase):
 
         bpy_mod.ops.wm.save_as_mainfile = fake_save
         # _finish_session / _update_ui_from_progress 依赖 context 与 scenes
-        bpy_mod.context = SimpleNamespace(window_manager=SimpleNamespace(rm_busy=False))
-        bpy_mod.data.scenes = MockNamedCollection("name")
-        bpy_mod.data.window_managers = []  # _tag_redraw 遍历，空即可
+        setattr(
+            bpy_mod,
+            "context",
+            SimpleNamespace(window_manager=SimpleNamespace(rm_busy=False)),
+        )
+        setattr(data, "scenes", MockNamedCollection("name"))
+        setattr(data, "window_managers", [])  # _tag_redraw 遍历，空即可
         sys.modules["bpy"] = bpy_mod
         cls.bpy_mod = bpy_mod
 
@@ -114,7 +151,7 @@ class TestOpsExportIndex(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="rm_ops_test_")
         self.addCleanup(self._cleanup_tmp)
-        self.scene = MockScene("Scene")
+        self.scene = MockSceneOps("Scene")
         self.bpy_mod.data.scenes.add(self.scene)
         self.scene.rm_output_dir = os.path.join(self.tmp, "out")
         self.scene.rm_file_template = "{name}_{index}"
@@ -183,7 +220,7 @@ class TestOpsExportIndex(unittest.TestCase):
         for s, sel in zip(shots, [True, False, False, True, True]):
             s.selected = sel
         op = self.ops.RM_OT_render_all()
-        op.report = lambda *a, **k: None
+        op.report = lambda *a, **k: None  # ty: ignore[invalid-assignment]
 
         class FakeProc:
             def poll(self):
@@ -284,7 +321,7 @@ class TestOpsExportIndex(unittest.TestCase):
         import render_monitor.rm_job as rm_job
 
         progress = os.path.join(self.tmp, "progress.json")
-        shots = [
+        shots: list[Any] = [
             {"uid": "a" * 32, "name": "shotA", "status": "DONE",
              "path": "p1.png", "error": ""},
             {"uid": "b" * 32, "name": "shotB", "status": "RENDERING",
@@ -316,14 +353,14 @@ class TestOpsExportIndex(unittest.TestCase):
             total=1, shots=[], mm=None, mm_path="",
         )
         try:
-            long_shots = [{
+            long_shots: list[Any] = [{
                 "uid": "a" * 32, "name": "shotA" + "长" * 50,
                 "status": "RENDERING", "path": "x.png",
                 "error": "some long error message " * 10,
             }]
             rm_job._write_progress(progress, "running", 1, long_shots)
-            short_shots = [{"uid": "a" * 32, "name": "A", "status": "DONE",
-                            "path": "", "error": ""}]
+            short_shots: list[Any] = [{"uid": "a" * 32, "name": "A", "status": "DONE",
+                                       "path": "", "error": ""}]
             rm_job._write_progress(progress, "running", 1, short_shots)
             self.ops._active["progress_path"] = progress
             payload = self.ops._read_progress()
@@ -465,7 +502,7 @@ class TestOpsExportIndex(unittest.TestCase):
     def test_name_number_helper_falls_back_to_dialog_operator(self):
         """某些情况下 active_operator 可能指向按钮自身，使用 invoke 时保存的引用兜底。"""
         dialog_op = SimpleNamespace(shot_name="快照")
-        self.ops._capture_dialog_operator = dialog_op
+        self.ops._capture_dialog_operator = dialog_op  # ty: ignore[invalid-assignment]
         # active_operator 不是捕获弹窗操作符（例如是按钮操作符本身）
         ctx = SimpleNamespace(active_operator=SimpleNamespace(delta=0), area=None)
         op = self.ops.RM_OT_shot_name_number()

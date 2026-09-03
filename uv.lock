@@ -1,0 +1,27 @@
+version = 1
+revision = 3
+requires-python = ">=3.11"
+
+[[package]]
+name = "fake-bpy-module-latest"
+version = "20260902"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/90/52/686cc82f92d975370eb04b62b51c0664fb0e818259043b826e1c1f066ef6/fake_bpy_module_latest-20260902.tar.gz", hash = "sha256:b3617eba3e7155f8cb560ef482199bd87d4c72f7cd1ebe64b8ce73c2e3260b7c", size = 963328, upload-time = "2026-09-02T10:10:17.324Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/50/87/a641b132395e067541140d0e7de6dc3ae6d06eb2da5a9db70fb3303a29d2/fake_bpy_module_latest-20260902-py3-none-any.whl", hash = "sha256:cd8adf08259f50b571e6abad8adafd41e4f70ad77358a8034bf646409308e783", size = 1110843, upload-time = "2026-09-02T10:10:14.543Z" },
+]
+
+[[package]]
+name = "render-monitor-dev"
+version = "0.0.0"
+source = { virtual = "." }
+
+[package.dev-dependencies]
+dev = [
+    { name = "fake-bpy-module-latest" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "fake-bpy-module-latest", specifier = ">=20260902" }]

@@ -20,6 +20,7 @@ import sys
 import tempfile
 import types
 import unittest
+from typing import Any
 
 from .test_core import MockData, MockObject, MockNamedCollection, MockScene, Vector  # noqa: F401
 
@@ -29,19 +30,27 @@ class TestRmJob(unittest.TestCase):
     def setUpClass(cls):
         # 注入 mock 模块（复用 test_core 的基建）
         math = types.ModuleType("mathutils")
-        math.Vector = Vector
-        math.Matrix = __import__("render_monitor.tests.test_core", fromlist=["Matrix"]).Matrix
+        setattr(math, "Vector", Vector)
+        setattr(
+            math,
+            "Matrix",
+            __import__("render_monitor.tests.test_core", fromlist=["Matrix"]).Matrix,
+        )
         sys.modules["mathutils"] = math
 
         bpy_mod = types.ModuleType("bpy")
         data = MockData()
-        data.scenes = MockNamedCollection("name")
-        bpy_mod.data = data
-        bpy_mod.context = types.SimpleNamespace()
-        bpy_mod.ops = types.SimpleNamespace(render=types.SimpleNamespace(render=None))
+        setattr(data, "scenes", MockNamedCollection("name"))
+        setattr(bpy_mod, "data", data)
+        setattr(bpy_mod, "context", types.SimpleNamespace())
+        setattr(bpy_mod, "ops", types.SimpleNamespace(render=types.SimpleNamespace(render=None)))
         # render_stats handler 注册目标（rm_job._main 会 append）
-        bpy_mod.app = types.SimpleNamespace(
-            handlers=types.SimpleNamespace(render_stats=[])
+        setattr(
+            bpy_mod,
+            "app",
+            types.SimpleNamespace(
+                handlers=types.SimpleNamespace(render_stats=[])
+            ),
         )
         sys.modules["bpy"] = bpy_mod
 
@@ -282,8 +291,8 @@ class TestRmJob(unittest.TestCase):
         self.assertEqual(leftovers, [])
 
     def _stats_entry(self):
-        entry = {"uid": "x" * 32, "name": "shotX", "status": "RENDERING",
-                 "path": "", "error": ""}
+        entry: Any = {"uid": "x" * 32, "name": "shotX", "status": "RENDERING",
+                      "path": "", "error": ""}
         progress = os.path.join(self.tmp, "progress_stats.json")
         self.rm_job._stats.update(
             entry=entry, start=1.0, last_write=0.0,

@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+from typing import TypedDict
 
 import bpy
 
@@ -82,8 +83,18 @@ def _plugin_version_str():
 # 轮询子进程写出的进度 JSON 来更新 UI。主场景从头到尾零修改。
 # ---------------------------------------------------------------------------
 
+class _RenderSession(TypedDict):
+    process: subprocess.Popen[bytes] | None
+    scene_name: str
+    tmpdir: str
+    progress_path: str
+    log_path: str
+    total: int
+    uids: list[str]
+
+
 # 当前渲染会话的模块级状态（同一时间只允许一个渲染会话）
-_active = {
+_active: _RenderSession = {
     "process": None,          # subprocess.Popen
     "scene_name": "",
     "tmpdir": "",
@@ -331,7 +342,9 @@ def _finish_session(returncode, cancelled=False):
         shutil.rmtree(_active["tmpdir"], ignore_errors=True)
         _active.update(tmpdir="", progress_path="", log_path="", total=0,
                        scene_name="", uids=[])
-        bpy.context.window_manager.rm_busy = False
+        wm = bpy.context.window_manager
+        assert wm is not None
+        setattr(wm, "rm_busy", False)
         _tag_redraw()
     except BaseException:  # noqa: BLE001
         pass
@@ -459,11 +472,11 @@ def _start_subprocess_render(context, uids):
     try:
         proc = subprocess.Popen(cmd, stdout=log_target, stderr=log_target)
     except OSError as exc:
-        if log_target is not subprocess.DEVNULL:
+        if not isinstance(log_target, int):
             log_target.close()
         shutil.rmtree(tmpdir, ignore_errors=True)
         return False, f"启动渲染进程失败: {exc}"
-    if log_target is not subprocess.DEVNULL:
+    if not isinstance(log_target, int):
         log_target.close()  # 子进程持有句柄，父进程可立即关闭
 
     _active.update(
@@ -508,7 +521,7 @@ class RM_OT_capture(bpy.types.Operator):
     bl_description = "把当前场景状态（物体/集合/环境/相机/渲染设置/帧）保存为新快照"
     bl_options = {"REGISTER"}
 
-    shot_name: bpy.props.StringProperty(name="快照名称", default="")
+    shot_name: bpy.props.StringProperty(name="快照名称", default="")  # ty: ignore[invalid-type-form]
 
     @classmethod
     def poll(cls, context):
@@ -532,10 +545,16 @@ class RM_OT_capture(bpy.types.Operator):
     def draw(self, context):
         # 名称输入框右侧放 - +：逻辑与 Blender 文件保存框一致，
         # 调整名称扩展名之前末尾的数字（保留前导零，减号不会降到负数）。
-        row = self.layout.row(align=True)
+        layout = self.layout
+        assert layout is not None
+        row = layout.row(align=True)
         row.prop(self, "shot_name", text="")
-        row.operator("rm.shot_name_number", text="", icon="REMOVE").delta = -1
-        row.operator("rm.shot_name_number", text="", icon="ADD").delta = 1
+        minus = row.operator("rm.shot_name_number", text="", icon="REMOVE")
+        assert minus is not None
+        minus.delta = -1
+        plus = row.operator("rm.shot_name_number", text="", icon="ADD")
+        assert plus is not None
+        plus.delta = 1
 
     def execute(self, context):
         global _capture_dialog_operator
@@ -560,7 +579,7 @@ class RM_OT_shot_name_number(bpy.types.Operator):
     bl_description = "像 Blender 文件保存框那样增大或减小名称末尾的数字"
     bl_options = {"REGISTER"}
 
-    delta: bpy.props.IntProperty(name="调整量", default=1)
+    delta: bpy.props.IntProperty(name="调整量", default=1)  # ty: ignore[invalid-type-form]
 
     def execute(self, context):
         global _capture_dialog_operator
@@ -697,7 +716,7 @@ class RM_OT_toggle_shot(bpy.types.Operator):
     bl_label = "切换渲染勾选"
     bl_description = "勾选/取消勾选该快照（「渲染勾选」只渲染勾选的快照）"
 
-    uid: bpy.props.StringProperty(name="UID", default="")
+    uid: bpy.props.StringProperty(name="UID", default="")  # ty: ignore[invalid-type-form]
 
     @classmethod
     def poll(cls, context):
@@ -723,7 +742,7 @@ class RM_OT_select_all(bpy.types.Operator):
             ("INVERT", "反选", "反转每个快照的勾选状态"),
         ],
         default="ALL",
-    )
+    )  # ty: ignore[invalid-type-form]
 
     @classmethod
     def poll(cls, context):
@@ -759,12 +778,14 @@ class RM_OT_clear_done(bpy.types.Operator):
         return context.window_manager.invoke_confirm(self, event)
 
     def draw(self, context):
+        layout = self.layout
+        assert layout is not None
         n = sum(1 for s in context.scene.rm_shots if s.status == "DONE")
-        self.layout.label(
+        layout.label(
             text=f"将删除 {n} 个已完成快照（渲染状态一并清除）",
             icon="ERROR",
         )
-        self.layout.label(text="此操作不可撤销。")
+        layout.label(text="此操作不可撤销。")
 
     def execute(self, context):
         scene = context.scene
@@ -793,12 +814,14 @@ class RM_OT_clear_all(bpy.types.Operator):
         return context.window_manager.invoke_confirm(self, event)
 
     def draw(self, context):
+        layout = self.layout
+        assert layout is not None
         scene = context.scene
-        self.layout.label(
+        layout.label(
             text=f"将删除场景「{scene.name}」的全部 {len(scene.rm_shots)} 个快照",
             icon="ERROR",
         )
-        self.layout.label(text="此操作不可撤销，渲染状态也会一并清除。")
+        layout.label(text="此操作不可撤销，渲染状态也会一并清除。")
 
     def execute(self, context):
         scene = context.scene
@@ -834,10 +857,12 @@ class RM_OT_render_selected(bpy.types.Operator):
         return self.execute(context)
 
     def draw(self, context):
-        self.layout.label(
+        layout = self.layout
+        assert layout is not None
+        layout.label(
             text="文件未保存，请选择输出目录（绝对路径）：", icon="INFO"
         )
-        self.layout.prop(context.scene, "rm_output_dir")
+        layout.prop(context.scene, "rm_output_dir")
 
     def execute(self, context):
         shot = _active_shot(context.scene)
@@ -872,10 +897,12 @@ class RM_OT_render_all(bpy.types.Operator):
         return self.execute(context)
 
     def draw(self, context):
-        self.layout.label(
+        layout = self.layout
+        assert layout is not None
+        layout.label(
             text="文件未保存，请选择输出目录（绝对路径）：", icon="INFO"
         )
-        self.layout.prop(context.scene, "rm_output_dir")
+        layout.prop(context.scene, "rm_output_dir")
 
     def execute(self, context):
         scene = context.scene
@@ -915,7 +942,7 @@ class RM_OT_diagnose(bpy.types.Operator):
     bl_description = "显示快照与当前场景的视图层/集合开关状态，辅助检查集合排除设置"
     bl_options = {"REGISTER"}
 
-    report_text: bpy.props.StringProperty(name="诊断结果", default="")
+    report_text: bpy.props.StringProperty(name="诊断结果", default="")  # ty: ignore[invalid-type-form]
 
     def _active_shot(self, scene):
         return _active_shot(scene)
@@ -973,7 +1000,9 @@ class RM_OT_diagnose(bpy.types.Operator):
         return context.window_manager.invoke_props_dialog(self, width=560)
 
     def draw(self, context):
-        col = self.layout.column(align=True)
+        layout = self.layout
+        assert layout is not None
+        col = layout.column(align=True)
         for line in self.report_text.split("\n"):
             if line.strip():
                 col.label(text=line)

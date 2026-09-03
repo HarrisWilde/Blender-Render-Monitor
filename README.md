@@ -157,8 +157,11 @@
 ## 开发
 
 ```
+# 首次准备：在项目根目录创建 .venv 并生成 uv.lock
+uv sync
+
 # 运行单元测试（纯逻辑 + mock bpy 的捕获/恢复往返测试，不需要启动 Blender）
-python -m unittest discover -s render_monitor/tests -t .
+uv run python -m unittest discover -s render_monitor/tests -t .
 ```
 
 代码结构：

@@ -30,7 +30,18 @@ def _draw_wrapped(layout, text, icon="NONE", width=60, max_lines=6):
 class RM_UL_shots(UIList):
     """快照列表：名称 + 状态 + 输出文件。"""
 
-    def draw_item(self, context, layout, data, item, icon, active_data, active_propname):
+    def draw_item(
+        self,
+        context,
+        layout,
+        data,
+        item,
+        icon,
+        active_data,
+        active_property,
+        index: int | None = 0,
+        flt_flag: int | None = 0,
+    ):
         if self.layout_type in {"DEFAULT", "COMPACT"}:
             row = layout.row(align=True)
             # 序号 = 快照在列表中的原始顺序（与文件命名模板 {index} 对应），
@@ -61,12 +72,18 @@ class RM_UL_shots(UIList):
             # 渲染勾选：图标按钮（CHECKBOX_HLT=勾选 / CHECKBOX_DEHLT=未勾选），
             # 点击切换。不用 UIList 行内布尔 prop（其小方框在部分主题下不明显）。
             row.operator(
-                "rm.toggle_shot", text="",
+                "rm.toggle_shot",
+                text="",
                 icon="CHECKBOX_HLT" if item.selected else "CHECKBOX_DEHLT",
                 emboss=False,
             ).uid = item.uid
-            row.prop(item, "name", text="", emboss=False,
-                     icon=_STATUS_ICONS.get(item.status, "TIME"))
+            row.prop(
+                item,
+                "name",
+                text="",
+                emboss=False,
+                icon=_STATUS_ICONS.get(item.status, "TIME"),
+            )
             if item.status == "DONE" and item.output_path:
                 row.label(text="", icon="FILE_TICK")
         elif self.layout_type == "GRID":
@@ -85,17 +102,32 @@ class RM_PT_panel(Panel):
     def draw(self, context):
         scene = context.scene
         layout = self.layout
+        assert layout is not None
 
         # ---- 快照列表（显示所属场景，便于区分多场景下的独立快照）----
-        layout.label(text=f"场景：{scene.name}（共 {len(scene.rm_shots)} 个快照）",
-                     icon="SCENE_DATA")
+        layout.label(
+            text=f"场景：{scene.name}（共 {len(scene.rm_shots)} 个快照）",
+            icon="SCENE_DATA",
+        )
         # 渲染勾选的批量操作：全选 / 全不选 / 反选
         row = layout.row(align=True)
-        row.operator("rm.select_all", text="全选", icon="CHECKBOX_HLT").action = "ALL"
-        row.operator("rm.select_all", text="全不选", icon="CHECKBOX_DEHLT").action = "NONE"
-        row.operator("rm.select_all", text="反选", icon="ARROW_LEFTRIGHT").action = "INVERT"
+        select_all = row.operator("rm.select_all", text="全选", icon="CHECKBOX_HLT")
+        assert select_all is not None
+        select_all.action = "ALL"
+        select_none = row.operator(
+            "rm.select_all", text="全不选", icon="CHECKBOX_DEHLT"
+        )
+        assert select_none is not None
+        select_none.action = "NONE"
+        select_invert = row.operator(
+            "rm.select_all", text="反选", icon="ARROW_LEFTRIGHT"
+        )
+        assert select_invert is not None
+        select_invert.action = "INVERT"
         row = layout.row()
-        row.template_list("RM_UL_shots", "", scene, "rm_shots", scene, "rm_shots_active")
+        row.template_list(
+            "RM_UL_shots", "", scene, "rm_shots", scene, "rm_shots_active"
+        )
         col = row.column(align=True)
         col.operator("rm.move_up", text="", icon="TRIA_UP")
         col.operator("rm.move_down", text="", icon="TRIA_DOWN")
@@ -114,7 +146,7 @@ class RM_PT_panel(Panel):
 
         # ---- 渲染设置 ----
         box = layout.box()
-        box.label(text="批量渲染（后台执行，UI 不冻结）", icon="RENDER_STILL")
+        box.label(text="批量渲染", icon="RENDER_STILL")
         box.prop(scene, "rm_output_dir")
         box.prop(scene, "rm_file_template")
         row = box.row()
@@ -132,7 +164,9 @@ class RM_PT_panel(Panel):
             row2 = box.row()
             row2.progress(factor=min(done / total, 1.0))
             row2.label(text=f"{done}/{scene.rm_render_total}")
-            box.label(text=f"正在渲染：{scene.rm_render_current or '…'}", icon="SORTTIME")
+            box.label(
+                text=f"正在渲染：{scene.rm_render_current or '…'}", icon="SORTTIME"
+            )
             # 当前张实时统计：整体进度条 / 采样（含块进度）/ 已用时间 / 剩余
             if scene.rm_render_samples_total:
                 sample_text = f"采样 {scene.rm_render_samples or '—'}"
@@ -143,7 +177,9 @@ class RM_PT_panel(Panel):
                     )
                     sample_text += f" · 块 {cur_block}/{scene.rm_render_tiles_total}"
                 srow = box.row(align=True)
-                srow.progress(factor=min(scene.rm_render_progress, 1.0), text=sample_text)
+                srow.progress(
+                    factor=min(scene.rm_render_progress, 1.0), text=sample_text
+                )
             else:
                 box.row(align=True).label(text="采样 —", icon="TIME")
             stat_row = box.row(align=True)
@@ -155,11 +191,15 @@ class RM_PT_panel(Panel):
                 stat_row.label(text=f"剩余 {scene.rm_render_remaining or '—'}")
         else:
             row = box.row(align=True)
-            row.operator("rm.render_selected", text="渲染当前", icon="RESTRICT_RENDER_OFF")
+            row.operator(
+                "rm.render_selected", text="渲染当前", icon="RESTRICT_RENDER_OFF"
+            )
             # 动态显示勾选数量，所见即所得：渲染勾选（勾选数/总数）
             checked = sum(1 for s in scene.rm_shots if s.selected)
             total = len(scene.rm_shots)
-            row.operator("rm.render_all", text=f"渲染勾选（{checked}/{total}）", icon="PLAY")
+            row.operator(
+                "rm.render_all", text=f"渲染勾选（{checked}/{total}）", icon="PLAY"
+            )
         row = box.row()
         row.operator("rm.diagnose", text="环境诊断", icon="INFO")
 

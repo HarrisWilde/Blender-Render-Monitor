@@ -167,8 +167,8 @@ class MockScene:
     def __init__(self, name="Scene"):
         self.name = name
         self.frame_current = 1
-        self.camera = None
-        self.world = None
+        self.camera: MockObject | None = None
+        self.world: MockWorld | None = None
         self.collection = MockCollection("Master")
         self.view_layers = MockNamedCollection("name")
         self.render = _make_render_settings()
@@ -241,13 +241,13 @@ class TestCoreStateRoundtrip(unittest.TestCase):
     def setUpClass(cls):
         # 注入 mock 模块，使 core.py 的 import bpy/mathutils 成功
         math = types.ModuleType("mathutils")
-        math.Vector = Vector
-        math.Matrix = Matrix
+        setattr(math, "Vector", Vector)
+        setattr(math, "Matrix", Matrix)
         sys.modules["mathutils"] = math
 
         bpy_mod = types.ModuleType("bpy")
         cls.bpy_mock = MockBpy()
-        bpy_mod.data = cls.bpy_mock.data
+        setattr(bpy_mod, "data", cls.bpy_mock.data)
         sys.modules["bpy"] = bpy_mod
 
         cls.core = importlib.import_module("render_monitor.core")
@@ -352,14 +352,17 @@ class TestCoreStateRoundtrip(unittest.TestCase):
         self.core.apply_scene_state(scene, state)
 
         # 逐项验证
+        assert scene.camera is not None
         self.assertEqual(scene.frame_current, 42)
         self.assertEqual(scene.camera.name, "Cam")
         self.assertEqual(scene.render.engine, "CYCLES")
         self.assertEqual(scene.cycles.samples, 256)
         self.assertEqual(scene.render.resolution_x, 1920)
         # use_nodes 恢复为 True（mock 模拟真实 Blender 自动建节点树）
+        assert scene.world is not None
         self.assertTrue(scene.world.use_nodes)
         # 背景节点恢复
+        assert scene.world.node_tree is not None
         bg = scene.world.node_tree.nodes[0]
         self.assertEqual(bg.inputs["Strength"].default_value, 1.0)
         self.assertEqual(list(bg.inputs["Color"].default_value), [0.05, 0.05, 0.05, 1])

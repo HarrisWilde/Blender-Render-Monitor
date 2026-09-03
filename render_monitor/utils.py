@@ -76,7 +76,7 @@ def adjust_name_number(name: str, delta: int) -> str:
     else:
         match = _TRAILING_NUMBER_RE.search(base)
         if match:
-            head = base[:match.start()]
+            head = base[: match.start()]
             digits = match.group(1)
             pic = int(digits)
             num_len = len(digits)
@@ -94,8 +94,7 @@ def adjust_name_number(name: str, delta: int) -> str:
             num_len -= 1
 
     pic += delta
-    if pic < 0:
-        pic = 0
+    pic = max(pic, 0)
 
     if num_len:
         number = str(pic).zfill(num_len)
@@ -110,7 +109,12 @@ def adjust_name_number(name: str, delta: int) -> str:
     return head + number + tail
 
 
-def format_filename(template: str, shot_name: str, frame: int, index: int = 1) -> str:
+def format_filename(
+    template: str | None,
+    shot_name: str,
+    frame: int | None,
+    index: int | None = 1,
+) -> str:
     """按模板生成输出文件名（不含扩展名，可含子文件夹相对路径）。
 
     模板支持 {name}（快照名）、{index}（列表顺序，从 1 开始）、{frame}（帧号）
@@ -124,8 +128,8 @@ def format_filename(template: str, shot_name: str, frame: int, index: int = 1) -
     # 先把 frame/index 归一化成安全 int：入参为 None 或非数字时置 0，
     # 避免回退分支里的 int() 再次抛出未捕获异常。
     try:
-        frame = int(frame)
-        index = int(index)
+        frame = int(frame) if frame is not None else 0
+        index = int(index) if index is not None else 0
     except (TypeError, ValueError):
         frame = index = 0
     safe_name = sanitize_relative_path(shot_name)
@@ -161,7 +165,7 @@ def build_output_path(outdir_abs: str, filename: str, ext: str) -> str:
 #   [4:4+N] JSON payload（{"state", "total", "shots"}）
 # 单写者单读者，无需锁。
 PROGRESS_MMAP_SIZE = 1 << 20  # 1 MiB（进度 JSON 通常几十 KB，留足余量）
-PROGRESS_HEADER = 4           # 长度前缀字节数（struct 大端 ">I"）
+PROGRESS_HEADER = 4  # 长度前缀字节数（struct 大端 ">I"）
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +197,7 @@ def _parse_timer(value: str):
     return sec
 
 
-def parse_render_stats(stats: str) -> dict:
+def parse_render_stats(stats: str | None) -> dict:
     """从 render_stats 字符串解析渲染进度。
 
     返回 dict（字段缺失则不出现）：
@@ -231,7 +235,7 @@ def format_duration(seconds) -> str:
     if seconds is None:
         return ""
     try:
-        centis = int(round(max(0.0, float(seconds)) * 100))
+        centis = round(max(0.0, float(seconds)) * 100)
     except (TypeError, ValueError):
         return ""
     s = centis // 100

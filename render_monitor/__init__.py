@@ -37,17 +37,23 @@ try:
     )
     from bpy.types import Panel, PropertyGroup, UIList
 except ImportError:  # 非 Blender 环境（如单元测试）下允许导入包
-    bpy = None
-    BoolProperty = CollectionProperty = EnumProperty = IntProperty = StringProperty = None
-    FloatProperty = None
-    Panel = PropertyGroup = UIList = None
+    bpy = None  # ty: ignore[invalid-assignment]
+    BoolProperty = None  # ty: ignore[invalid-assignment]
+    CollectionProperty = None  # ty: ignore[invalid-assignment]
+    EnumProperty = None  # ty: ignore[invalid-assignment]
+    IntProperty = None  # ty: ignore[invalid-assignment]
+    StringProperty = None  # ty: ignore[invalid-assignment]
+    FloatProperty = None  # ty: ignore[invalid-assignment]
+    Panel = None  # ty: ignore[invalid-assignment]
+    PropertyGroup = None  # ty: ignore[invalid-assignment]
+    UIList = None
 
 from . import core  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # 数据模型
 # ---------------------------------------------------------------------------
+
 
 def _status_items():
     return [
@@ -63,21 +69,26 @@ if bpy is not None:
     class RMShot(PropertyGroup):
         """单个快照条目：名称/状态/输出文件 + 完整快照数据（JSON 字符串）。"""
 
-        uid: StringProperty(name="UID", default="")
-        name: StringProperty(name="名称", default="快照")
-        data_json: StringProperty(name="快照数据", default="{}")
-        status: EnumProperty(name="状态", items=_status_items(), default="PENDING")
-        output_path: StringProperty(name="输出文件", default="")
-        error: StringProperty(name="错误信息", default="",
-                              description="最近一次渲染失败的原因")
+        uid: StringProperty(name="UID", default="")  # ty: ignore[invalid-type-form]
+        name: StringProperty(name="名称", default="快照")  # ty: ignore[invalid-type-form]
+        data_json: StringProperty(name="快照数据", default="{}")  # ty: ignore[invalid-type-form]
+        status: EnumProperty(name="状态", items=_status_items(), default="PENDING")  # ty: ignore[invalid-type-form]
+        output_path: StringProperty(name="输出文件", default="")  # ty: ignore[invalid-type-form]
+        error: StringProperty(
+            name="错误信息", default="", description="最近一次渲染失败的原因"
+        )  # ty: ignore[invalid-type-form]
         # 渲染勾选：默认全部勾选，「渲染勾选」只渲染勾选的快照
-        selected: BoolProperty(name="渲染", default=True,
-                               description="勾选后参与「渲染勾选」；用列表上方的全选/全不选/反选批量设置")
+        selected: BoolProperty(
+            name="渲染",
+            default=True,
+            description="勾选后参与「渲染勾选」；用列表上方的全选/全不选/反选批量设置",
+        )  # ty: ignore[invalid-type-form]
 
 
 # ---------------------------------------------------------------------------
 # 场景属性
 # ---------------------------------------------------------------------------
+
 
 def _dir_path_options():
     """Blender 4.5+ 新增的相对路径声明选项。
@@ -92,51 +103,84 @@ def _dir_path_options():
 
 
 def register_scene_props():
-    bpy.types.Scene.rm_shots = CollectionProperty(type=RMShot)
-    bpy.types.Scene.rm_shots_active = IntProperty(name="活动快照", default=0, min=0)
-    bpy.types.Scene.rm_output_dir = StringProperty(
-        name="输出目录",
-        subtype="DIR_PATH",
-        default="//",
-        options=_dir_path_options(),
-        description="渲染输出目录，默认输出到当前 .blend 文件所在目录；支持 // 相对路径，未保存的文件请选择绝对路径",
+    scene = bpy.types.Scene
+    wm = bpy.types.WindowManager
+
+    setattr(scene, "rm_shots", CollectionProperty(type=RMShot))
+    setattr(scene, "rm_shots_active", IntProperty(name="活动快照", default=0, min=0))
+    setattr(
+        scene,
+        "rm_output_dir",
+        StringProperty(
+            name="输出目录",
+            subtype="DIR_PATH",
+            default="//",
+            options=_dir_path_options(),
+            description="渲染输出目录，默认输出到当前 .blend 文件所在目录；支持 // 相对路径，未保存的文件请选择绝对路径",
+        ),
     )
-    bpy.types.Scene.rm_write_log = BoolProperty(
-        name="输出渲染日志",
-        default=False,
-        description="在输出目录生成 rm_render_log_*.txt（含快照版本与视图层验证结果），排查问题时再勾选",
+    setattr(
+        scene,
+        "rm_write_log",
+        BoolProperty(
+            name="输出渲染日志",
+            default=False,
+            description="在输出目录生成 rm_render_log_*.txt（含快照版本与视图层验证结果），排查问题时再勾选",
+        ),
     )
-    bpy.types.Scene.rm_file_template = StringProperty(
-        name="文件命名模板",
-        default="{name} {index}",
-        description="输出文件名模板：{name}（快照名）、{index}（列表序号）、{frame}（帧号）",
+    setattr(
+        scene,
+        "rm_file_template",
+        StringProperty(
+            name="文件命名模板",
+            default="{name} {index}",
+            description="输出文件名模板：{name}（快照名）、{index}（列表序号）、{frame}（帧号）",
+        ),
     )
-    bpy.types.Scene.rm_use_snapshot_frame = BoolProperty(
-        name="使用快照帧",
-        default=True,
-        description="渲染时把场景切到快照记录的帧号（关闭则用当前帧）",
+    setattr(
+        scene,
+        "rm_use_snapshot_frame",
+        BoolProperty(
+            name="使用快照帧",
+            default=True,
+            description="渲染时把场景切到快照记录的帧号（关闭则用当前帧）",
+        ),
     )
-    bpy.types.WindowManager.rm_busy = BoolProperty(
-        name="渲染进行中",
-        default=False,
-        description="Render Monitor 正在渲染，禁止并发启动其他渲染任务",
+    setattr(
+        wm,
+        "rm_busy",
+        BoolProperty(
+            name="渲染进行中",
+            default=False,
+            description="Render Monitor 正在渲染，禁止并发启动其他渲染任务",
+        ),
     )
-    bpy.types.Scene.rm_render_done = IntProperty(name="已完成", default=0, min=0)
-    bpy.types.Scene.rm_render_failed = IntProperty(name="失败", default=0, min=0)
-    bpy.types.Scene.rm_render_total = IntProperty(name="总计", default=0, min=0)
-    bpy.types.Scene.rm_render_current = StringProperty(name="当前渲染", default="")
-    bpy.types.Scene.rm_render_samples = StringProperty(name="当前采样", default="")
-    bpy.types.Scene.rm_render_samples_cur = IntProperty(name="当前采样数", default=0, min=0)
-    bpy.types.Scene.rm_render_samples_total = IntProperty(name="总采样数", default=0, min=0)
-    bpy.types.Scene.rm_render_tiles_done = IntProperty(name="已完成块数", default=0, min=0)
-    bpy.types.Scene.rm_render_tiles_total = IntProperty(name="总块数", default=1, min=1)
-    bpy.types.Scene.rm_render_progress = FloatProperty(
-        name="整体进度", default=0.0, min=0.0, max=1.0, precision=3
+    setattr(scene, "rm_render_done", IntProperty(name="已完成", default=0, min=0))
+    setattr(scene, "rm_render_failed", IntProperty(name="失败", default=0, min=0))
+    setattr(scene, "rm_render_total", IntProperty(name="总计", default=0, min=0))
+    setattr(scene, "rm_render_current", StringProperty(name="当前渲染", default=""))
+    setattr(scene, "rm_render_samples", StringProperty(name="当前采样", default=""))
+    setattr(
+        scene, "rm_render_samples_cur", IntProperty(name="当前采样数", default=0, min=0)
     )
-    bpy.types.Scene.rm_render_phase = StringProperty(name="渲染阶段", default="")
-    bpy.types.Scene.rm_render_time = StringProperty(name="已用时间", default="")
-    bpy.types.Scene.rm_render_remaining = StringProperty(name="预计剩余", default="")
-    bpy.types.Scene.rm_last_message = StringProperty(name="最近消息", default="")
+    setattr(
+        scene, "rm_render_samples_total", IntProperty(name="总采样数", default=0, min=0)
+    )
+    setattr(
+        scene, "rm_render_tiles_done", IntProperty(name="已完成块数", default=0, min=0)
+    )
+    setattr(
+        scene, "rm_render_tiles_total", IntProperty(name="总块数", default=1, min=1)
+    )
+    setattr(
+        scene,
+        "rm_render_progress",
+        FloatProperty(name="整体进度", default=0.0, min=0.0, max=1.0, precision=3),
+    )
+    setattr(scene, "rm_render_phase", StringProperty(name="渲染阶段", default=""))
+    setattr(scene, "rm_render_time", StringProperty(name="已用时间", default=""))
+    setattr(scene, "rm_render_remaining", StringProperty(name="预计剩余", default=""))
+    setattr(scene, "rm_last_message", StringProperty(name="最近消息", default=""))
 
 
 def unregister_scene_props():
@@ -168,7 +212,7 @@ def unregister_scene_props():
         except AttributeError:
             pass
     try:
-        del bpy.types.WindowManager.rm_busy
+        delattr(bpy.types.WindowManager, "rm_busy")
     except AttributeError:
         pass
 
@@ -176,6 +220,7 @@ def unregister_scene_props():
 # ---------------------------------------------------------------------------
 # 注册
 # ---------------------------------------------------------------------------
+
 
 def register():
     # 官方示例：先注册类，再挂 CollectionProperty 到 Scene
