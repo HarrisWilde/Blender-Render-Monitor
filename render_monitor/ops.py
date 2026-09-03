@@ -22,6 +22,7 @@ from . import core, utils
 # 内部工具
 # ---------------------------------------------------------------------------
 
+
 def _active_shot(scene):
     idx = scene.rm_shots_active
     if 0 <= idx < len(scene.rm_shots):
@@ -83,6 +84,7 @@ def _plugin_version_str():
 # 轮询子进程写出的进度 JSON 来更新 UI。主场景从头到尾零修改。
 # ---------------------------------------------------------------------------
 
+
 class _RenderSession(TypedDict):
     process: subprocess.Popen[bytes] | None
     scene_name: str
@@ -95,13 +97,13 @@ class _RenderSession(TypedDict):
 
 # 当前渲染会话的模块级状态（同一时间只允许一个渲染会话）
 _active: _RenderSession = {
-    "process": None,          # subprocess.Popen
+    "process": None,  # subprocess.Popen
     "scene_name": "",
     "tmpdir": "",
     "progress_path": "",
     "log_path": "",
     "total": 0,
-    "uids": [],               # 本次渲染队列的快照 uid（用于收尾精确统计/修正状态）
+    "uids": [],  # 本次渲染队列的快照 uid（用于收尾精确统计/修正状态）
 }
 
 # 当前“捕获快照”弹窗里的操作符实例；供名称 +/- 按钮在点击时修改它的 shot_name。
@@ -125,20 +127,21 @@ def _read_progress():
             return None
         with open(path, "rb") as f:
             mm = mmap.mmap(
-                f.fileno(), min(size, utils.PROGRESS_MMAP_SIZE),
+                f.fileno(),
+                min(size, utils.PROGRESS_MMAP_SIZE),
                 access=mmap.ACCESS_READ,
             )
     except (OSError, ValueError):
         return None
     try:
-        (length,) = struct.unpack(">I", mm[0:utils.PROGRESS_HEADER])
+        (length,) = struct.unpack(">I", mm[0 : utils.PROGRESS_HEADER])
     except struct.error:
         mm.close()
         return None
     try:
         if length <= 0 or length > mm.size() - utils.PROGRESS_HEADER:
             return None
-        data = mm[utils.PROGRESS_HEADER:utils.PROGRESS_HEADER + length]
+        data = mm[utils.PROGRESS_HEADER : utils.PROGRESS_HEADER + length]
     finally:
         mm.close()
     try:
@@ -298,9 +301,7 @@ def _finish_session(returncode, cancelled=False):
         log_hint = ""
         if _active["log_path"]:  # 仅勾选了「输出渲染日志」时提示路径
             if returncode != 0:
-                log_hint = (
-                    f"（渲染进程异常退出，代码 {returncode}，日志：{_active['log_path']}）"
-                )
+                log_hint = f"（渲染进程异常退出，代码 {returncode}，日志：{_active['log_path']}）"
             else:
                 log_hint = f"（日志：{_active['log_path']}）"
         elif returncode != 0:
@@ -340,8 +341,9 @@ def _finish_session(returncode, cancelled=False):
                     pass
             _active["process"] = None
         shutil.rmtree(_active["tmpdir"], ignore_errors=True)
-        _active.update(tmpdir="", progress_path="", log_path="", total=0,
-                       scene_name="", uids=[])
+        _active.update(
+            tmpdir="", progress_path="", log_path="", total=0, scene_name="", uids=[]
+        )
         wm = bpy.context.window_manager
         assert wm is not None
         setattr(wm, "rm_busy", False)
@@ -388,7 +390,10 @@ def _start_subprocess_render(context, uids):
         return False, "没有勾选的快照（请先在列表中勾选要渲染的，或点「全选」）"
     uids_set = set(uids)  # O(1) 成员判断；uids 保留原顺序用于 _active 记录
     if not bpy.app.binary_path:
-        return False, "无法定位 Blender 可执行文件（bpy.app.binary_path 为空，可能是以 Python 模块方式运行）"
+        return (
+            False,
+            "无法定位 Blender 可执行文件（bpy.app.binary_path 为空，可能是以 Python 模块方式运行）",
+        )
     # 未保存文件：// 相对路径无法解析，必须使用绝对路径输出目录
     if not bpy.data.filepath:
         if not scene.rm_output_dir or scene.rm_output_dir.startswith("//"):
@@ -411,12 +416,14 @@ def _start_subprocess_render(context, uids):
                 continue
             if "view_layers" not in data or data.get("version", 1) < 2:
                 old_snapshots += 1  # 旧版快照：无集合勾选/视图层数据
-            snapshots.append({
-                "uid": s.uid,
-                "name": s.name,
-                "index": i + 1,
-                "data": data,
-            })
+            snapshots.append(
+                {
+                    "uid": s.uid,
+                    "name": s.name,
+                    "index": i + 1,
+                    "data": data,
+                }
+            )
     if not snapshots:
         shutil.rmtree(tmpdir, ignore_errors=True)
         return False, "没有可渲染的快照（数据可能已损坏）"
@@ -461,10 +468,14 @@ def _start_subprocess_render(context, uids):
             return False, f"无法创建渲染日志文件: {exc}"
     cmd = [
         bpy.app.binary_path,
-        "-b", blend_copy,
-        "-P", rm_job,
+        "-b",
+        blend_copy,
+        "-P",
+        rm_job,
         "--",
-        scene.name, snap_path, outdir,
+        scene.name,
+        snap_path,
+        outdir,
         scene.rm_file_template or utils.DEFAULT_FILE_TEMPLATE,
         "1" if scene.rm_use_snapshot_frame else "0",
         progress,
@@ -505,15 +516,14 @@ def _start_subprocess_render(context, uids):
     wm.rm_busy = True
     if not bpy.app.timers.is_registered(_poll_render_timer):
         # persistent=True：渲染中加载新文件也不会注销 timer，确保收尾清理
-        bpy.app.timers.register(
-            _poll_render_timer, first_interval=0.5, persistent=True
-        )
+        bpy.app.timers.register(_poll_render_timer, first_interval=0.5, persistent=True)
     return True, f"已启动后台渲染（{len(snapshots)} 张），可在面板查看进度"
 
 
 # ---------------------------------------------------------------------------
 # 快照管理
 # ---------------------------------------------------------------------------
+
 
 class RM_OT_capture(bpy.types.Operator):
     bl_idname = "rm.capture"
@@ -732,7 +742,9 @@ class RM_OT_toggle_shot(bpy.types.Operator):
 class RM_OT_select_all(bpy.types.Operator):
     bl_idname = "rm.select_all"
     bl_label = "批量设置渲染勾选"
-    bl_description = "全选 / 全不选 / 反选快照的渲染勾选状态（「渲染勾选」只渲染勾选的快照）"
+    bl_description = (
+        "全选 / 全不选 / 反选快照的渲染勾选状态（「渲染勾选」只渲染勾选的快照）"
+    )
 
     action: bpy.props.EnumProperty(
         name="操作",
@@ -837,6 +849,7 @@ class RM_OT_clear_all(bpy.types.Operator):
 # 渲染
 # ---------------------------------------------------------------------------
 
+
 class RM_OT_render_selected(bpy.types.Operator):
     bl_idname = "rm.render_selected"
     bl_label = "渲染当前快照"
@@ -859,9 +872,7 @@ class RM_OT_render_selected(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         assert layout is not None
-        layout.label(
-            text="文件未保存，请选择输出目录（绝对路径）：", icon="INFO"
-        )
+        layout.label(text="文件未保存，请选择输出目录（绝对路径）：", icon="INFO")
         layout.prop(context.scene, "rm_output_dir")
 
     def execute(self, context):
@@ -899,9 +910,7 @@ class RM_OT_render_all(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         assert layout is not None
-        layout.label(
-            text="文件未保存，请选择输出目录（绝对路径）：", icon="INFO"
-        )
+        layout.label(text="文件未保存，请选择输出目录（绝对路径）：", icon="INFO")
         layout.prop(context.scene, "rm_output_dir")
 
     def execute(self, context):

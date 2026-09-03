@@ -47,13 +47,17 @@ RENDER_PROP_PATHS = [
     ("eevee_taa_render_samples", "eevee.taa_render_samples"),
     ("eevee_use_raytracing", "eevee.use_raytracing"),
     ("eevee_gi_diffuse_bounces", "eevee.gi_diffuse_bounces"),
-    ("eevee_use_motion_blur", "eevee.motion_blur_max"),  # 5.x 无布尔开关，记录步数做参考
+    (
+        "eevee_use_motion_blur",
+        "eevee.motion_blur_max",
+    ),  # 5.x 无布尔开关，记录步数做参考
 ]
 
 
 # ---------------------------------------------------------------------------
 # 内部工具
 # ---------------------------------------------------------------------------
+
 
 def _get_prop(obj, path):
     cur = obj
@@ -132,7 +136,9 @@ def _active_view_layer_index(scene):
     except (AttributeError, TypeError):
         try:
             for i, vl in enumerate(scene.view_layers):
-                if getattr(vl, "use", True) and vl == getattr(scene.view_layers, "active", None):
+                if getattr(vl, "use", True) and vl == getattr(
+                    scene.view_layers, "active", None
+                ):
                     return i
         except Exception:  # noqa: BLE001
             pass
@@ -142,6 +148,7 @@ def _active_view_layer_index(scene):
 # ---------------------------------------------------------------------------
 # World（环境）
 # ---------------------------------------------------------------------------
+
 
 def capture_world(world):
     """捕获 World 状态；无 World 时返回 None。"""
@@ -208,6 +215,7 @@ def apply_world(scene, state):
 # 渲染设置
 # ---------------------------------------------------------------------------
 
+
 def capture_render(scene):
     """捕获渲染设置（属性路径 + 值 列表）。"""
     props = []
@@ -232,6 +240,7 @@ def apply_render(scene, render_state):
 # ---------------------------------------------------------------------------
 # 集合与对象
 # ---------------------------------------------------------------------------
+
 
 def _capture_rotation(obj):
     """按 rotation_mode 记录旋转（Euler / Quaternion / AxisAngle），容错。"""
@@ -461,9 +470,7 @@ def apply_scene_state(scene, state, hide_new_objects=True):
     objs = state.get("objects", [])
     objs_by_name = {o["name"]: o for o in objs}
     memo = {}
-    ordered = sorted(
-        objs, key=lambda o: _parent_depth(objs_by_name, o["name"], memo)
-    )
+    ordered = sorted(objs, key=lambda o: _parent_depth(objs_by_name, o["name"], memo))
     for o in ordered:
         obj = bpy.data.objects.get(o["name"])
         if obj is None:

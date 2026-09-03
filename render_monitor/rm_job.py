@@ -114,11 +114,11 @@ def _write_progress(
     if len(payload) > utils.PROGRESS_MMAP_SIZE - utils.PROGRESS_HEADER:
         return  # 超缓冲（几乎不可能）：保留旧数据，避免写坏缓冲
     try:
-        mm[utils.PROGRESS_HEADER:utils.PROGRESS_HEADER + len(payload)] = payload
+        mm[utils.PROGRESS_HEADER : utils.PROGRESS_HEADER + len(payload)] = payload
         # 不调用 mm.flush()：flush 是同步落盘（msync/FlushViewOfFile），
         # 会违背"渲染期间零磁盘 IO"的初衷。同机进程共享内核页面缓存，
         # 读端经 mmap 立即可见写入；长度前缀保证读到完整新/旧数据。
-        mm[0:utils.PROGRESS_HEADER] = struct.pack(">I", len(payload))
+        mm[0 : utils.PROGRESS_HEADER] = struct.pack(">I", len(payload))
     except (ValueError, OSError):
         pass
 
@@ -136,15 +136,15 @@ def _close_progress_mmap():
 
 # 当前正在渲染的进度状态（render_stats handler 更新，_main 设置）
 _stats: _ProgressState = {
-    "entry": None,       # 正在渲染的 shots 条目（dict）
-    "start": None,       # 当前张开始时刻 time.monotonic()
-    "last_write": 0.0,   # 上次写进度文件的时间，用于节流
+    "entry": None,  # 正在渲染的 shots 条目（dict）
+    "start": None,  # 当前张开始时刻 time.monotonic()
+    "last_write": 0.0,  # 上次写进度文件的时间，用于节流
     "progress_path": "",
     "total": 0,
     "shots": [],
     "tile_weights": [],  # 当前张各分块的像素权重（行优先，和为 1）
-    "mm": None,          # 进度 mmap 对象（惰性打开，会话结束关闭）
-    "mm_path": "",       # 已映射的进度文件路径（路径变化时重新映射）
+    "mm": None,  # 进度 mmap 对象（惰性打开，会话结束关闭）
+    "mm_path": "",  # 已映射的进度文件路径（路径变化时重新映射）
 }
 
 
@@ -227,12 +227,14 @@ def _main():
     except ValueError:
         sys.stderr.write("rm_job: 缺少 '--' 参数分隔符\n")
         return 1
-    args = sys.argv[marker + 1:]
+    args = sys.argv[marker + 1 :]
     if len(args) < 6:
         sys.stderr.write(f"rm_job: 参数不足（需要 6 个，实际 {len(args)}）: {args}\n")
         return 1
 
-    scene_name, snapshots_path, outdir, template, use_snapshot_frame, progress_path = args[:6]
+    scene_name, snapshots_path, outdir, template, use_snapshot_frame, progress_path = (
+        args[:6]
+    )
     use_snapshot_frame = use_snapshot_frame == "1"
 
     # 让子进程能 import 插件包（rm_job.py 位于 addons/render_monitor/ 下）
@@ -338,8 +340,14 @@ def _main():
             entry["status"] = "RENDERING"
             # 初始化实时统计字段（render_stats handler 会持续更新）
             entry.update(
-                samples=0, samples_total=0, elapsed=0.0, remaining=None,
-                tiles_done=0, tiles_total=1, progress=0.0, phase="",
+                samples=0,
+                samples_total=0,
+                elapsed=0.0,
+                remaining=None,
+                tiles_done=0,
+                tiles_total=1,
+                progress=0.0,
+                phase="",
             )
             # 按当前分辨率与 Cycles 平铺尺寸计算各分块像素权重，
             # 用于按真实像素占比重建整体进度。
@@ -364,7 +372,9 @@ def _main():
                 tile_weights=tile_weights,
             )
             _write_progress(progress_path, "running", len(snapshots), shots)
-            bpy.ops.render.render(scene=scene.name, write_still=True, use_viewport=False)
+            bpy.ops.render.render(
+                scene=scene.name, write_still=True, use_viewport=False
+            )
             if not (os.path.exists(actual_path) and os.path.getsize(actual_path) > 0):
                 raise RuntimeError(
                     f"渲染未生成输出文件（可能被取消或写盘失败）: {path}"
@@ -401,12 +411,21 @@ if __name__ == "__main__":
         # 尽量把致命错误写入进度文件，便于主进程提示
         try:
             marker = sys.argv.index("--")
-            args = sys.argv[marker + 1:]
+            args = sys.argv[marker + 1 :]
             if len(args) >= 6:
                 _write_progress(
-                    args[5], "error", 0,
-                    [{"uid": "", "name": "致命错误", "status": "FAILED",
-                      "path": "", "error": traceback.format_exc()}],
+                    args[5],
+                    "error",
+                    0,
+                    [
+                        {
+                            "uid": "",
+                            "name": "致命错误",
+                            "status": "FAILED",
+                            "path": "",
+                            "error": traceback.format_exc(),
+                        }
+                    ],
                 )
         except (ValueError, OSError):
             pass
