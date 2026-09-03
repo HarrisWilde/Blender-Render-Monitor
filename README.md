@@ -6,6 +6,18 @@
 
 **当前版本：v1.5.8**
 
+## 界面预览
+
+<p align="center">
+  <a href="docs/screenshots/screenshot.png">
+    <img src="docs/screenshots/screenshot.png"
+         alt="Render Monitor 面板截图（点击查看大图）"
+         width="220">
+  </a>
+  <br>
+  <em>Render Monitor 侧边栏面板截图（长图，点击可查看完整大小）</em>
+</p>
+
 ## 功能
 
 每个快照记录：
