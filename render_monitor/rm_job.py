@@ -273,12 +273,18 @@ def _main():
             data = shot["data"]
             # 列表顺序编号（从 1 开始），用于文件命名 {index} 占位符
             shot_index = int(shot.get("index", i + 1))
-            # 诊断：确认快照版本与视图层数据（写入渲染日志，勾选「输出渲染日志」时可见）
-            print(f"[rm_job] 应用快照「{shot['name']}」version={data.get('version')}")
+            # 诊断：确认快照版本与视图层数据（写入渲染日志，勾选「输出渲染日志」时可见）。
+            # flush=True：子进程 stdout 被重定向到文件时是块缓冲的，若渲染中途被
+            # 停止/杀死，缓冲的日志会全部丢失（事故排查时最需要的正是这些行）。
+            print(
+                f"[rm_job] 应用快照「{shot['name']}」version={data.get('version')}",
+                flush=True,
+            )
             if "view_layers" not in data:
                 print(
                     "[rm_job] 警告: 该快照没有 view_layers 数据（旧版快照），"
-                    "集合勾选状态不会被应用——请重新捕获快照"
+                    "集合勾选状态不会被应用——请重新捕获快照",
+                    flush=True,
                 )
             frame_before = scene.frame_current
             core.apply_scene_state(scene, data)
@@ -313,14 +319,23 @@ def _main():
                                 f"{vl_state['name']}/{lc_state['name']} 未找到"
                             )
                 if problems:
-                    print("[rm_job] 视图层开关验证失败: " + " | ".join(problems))
+                    print(
+                        "[rm_job] 视图层开关验证失败: " + " | ".join(problems),
+                        flush=True,
+                    )
                 else:
-                    print("[rm_job] 视图层开关验证通过")
+                    print("[rm_job] 视图层开关验证通过", flush=True)
             ext = (scene.render.file_extension or ".png").lstrip(".")
             filename = utils.format_filename(
                 template, shot["name"], scene.frame_current, shot_index
             )
             path = utils.build_output_path(outdir, filename, ext)
+            # 诊断：把生效模板与解析结果写进日志——"输出名不对"类问题一眼定位
+            print(
+                f"[rm_job] 模板={template!r} 快照名={shot['name']!r} "
+                f"index={shot_index} → 输出={path}",
+                flush=True,
+            )
             os.makedirs(os.path.dirname(path) or outdir, exist_ok=True)
             # 渲染保护：绝不预先删除旧输出文件——渲染失败/取消时保留上一次的
             # 成功输出，避免误删用户已渲染的图。渲染到唯一临时文件，成功后

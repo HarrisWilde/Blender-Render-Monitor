@@ -16,8 +16,10 @@ from ..utils import (
     format_duration,
     format_filename,
     format_samples,
+    has_dynamic_field,
     parse_render_stats,
     sanitize_filename,
+    validate_filename_template,
 )
 
 
@@ -111,6 +113,54 @@ class TestFormatFilename(unittest.TestCase):
             format_filename("{name}_{frame:03d}", "cube", 7, index=5), "cube_007"
         )
 
+    def test_sole_placeholder_with_format_spec(self):
+        """回归：占位符带格式说明符时不能被误判成"无占位符"而静默回退默认模板。
+
+        旧实现用 `"{name}" not in tpl and "{frame}" not in tpl and
+        "{index}" not in tpl` 子串匹配，`{frame:04d}` / `{index:02d}` /
+        `{name:>6}` 都命不中，于是输出变成默认的 `名字_序号`。
+        """
+        self.assertEqual(format_filename("{frame:04d}", "shot", 7, index=5), "0007")
+        self.assertEqual(format_filename("{index:02d}", "shot", 7, index=3), "03")
+        self.assertEqual(format_filename("{index:03d}", "shot", 7, index=3), "003")
+        self.assertEqual(
+            format_filename("shot_{frame:04d}", "cube", 7, index=1), "shot_0007"
+        )
+        # 转换符 {name!s}：字段名仍是 name，不应回退
+        self.assertEqual(format_filename("{name!s}", "cube", 7, index=1), "cube")
+        # 带填充/对齐说明符：格式结果里的前导空格由文件名清洗去掉
+        self.assertEqual(format_filename("{name:>6}", "cube", 7, index=1), "cube")
+
+    def test_escaped_braces_fall_back(self):
+        """{{name}} 只是字面量 {name}，不含动态字段 → 回退默认模板。
+
+        否则会生成带花括号的文件名 "{name}.png"。
+        """
+        self.assertEqual(format_filename("{{name}}", "shot", 3, index=2), "shot_2")
+
+    def test_has_dynamic_field(self):
+        self.assertTrue(has_dynamic_field("{name}"))
+        self.assertTrue(has_dynamic_field("{frame:04d}"))
+        self.assertTrue(has_dynamic_field("{index:02d}"))
+        self.assertTrue(has_dynamic_field("shot_{name!s}"))
+        self.assertFalse(has_dynamic_field("plain-text"))
+        self.assertFalse(has_dynamic_field("{{name}}"))
+        self.assertFalse(has_dynamic_field("{}"))
+        self.assertFalse(has_dynamic_field("{0}"))
+        self.assertFalse(has_dynamic_field("{name"))  # 语法错误 → 当作无占位符
+        self.assertFalse(has_dynamic_field("{other}"))
+
+    def test_shot_name_number_looks_like_index(self):
+        """文档化既有行为：快照名里自带的序号（空格）会被清洗成下划线。
+
+        「快照 1」+ 模板 {name} → 快照_1，视觉上与 {name}_{index} 无法区分
+        （旧版插件自动命名的快照名就带这种序号）。
+        """
+        self.assertEqual(format_filename("{name}", "快照 1", 10, index=1), "快照_1")
+        self.assertEqual(
+            format_filename("{name} {index}", "快照 1", 10, index=1), "快照_1_1"
+        )
+
     def test_unsafe_name_sanitized(self):
         # 斜杠作为子文件夹分隔保留，段内非法字符仍被清洗
         self.assertEqual(format_filename("{name}", "a/b:c", 1, index=1), "a/b_c")
@@ -151,6 +201,49 @@ class TestFormatFilename(unittest.TestCase):
         # 模板非法 + frame 非法叠加：回退默认模板也要安全返回
         out = format_filename("plain-text", "shot", None, index=None)
         self.assertEqual(out, "shot_0")
+
+
+class TestValidateFilenameTemplate(unittest.TestCase):
+    """模板校验：坏模板必须报错，不能被静默换成默认模板。
+
+    真实事故回归（v1.5.9）：用户模板写成 `{name)`（把 `}` 打成 `)`），旧代码的
+    `"{name}" not in tpl` 判定为"无占位符"→ 静默套默认模板 `{name} {index}`，
+    快照名 `2NW20C5R（2ft-traic）/1` 被输出成 `…/1_1.png`，而用户以为用的是 `{name}`。
+    """
+
+    def test_valid_templates(self):
+        self.assertIsNone(validate_filename_template(None))
+        self.assertIsNone(validate_filename_template(""))
+        self.assertIsNone(validate_filename_template("   "))
+        self.assertIsNone(validate_filename_template("{name}"))
+        self.assertIsNone(validate_filename_template("{name} {index}"))
+        self.assertIsNone(validate_filename_template("{name}_{index:02d}"))
+        self.assertIsNone(validate_filename_template("{frame:04d}"))
+        self.assertIsNone(validate_filename_template("镜头/渲染_{name}"))
+
+    def test_half_closed_brace_reported(self):
+        # 事故现场：{name) —— 缺右花括号
+        msg = validate_filename_template("{name)")
+        self.assertIsNotNone(msg)
+        self.assertIn("花括号", msg)
+        self.assertIn("{name)", msg)
+
+    def test_unknown_placeholder_reported(self):
+        msg = validate_filename_template("{shot}_{name}")
+        self.assertIsNotNone(msg)
+        self.assertIn("未知占位符", msg)
+
+    def test_no_placeholder_reported(self):
+        msg = validate_filename_template("plain-text")
+        self.assertIsNotNone(msg)
+        self.assertIn("不含任何占位符", msg)
+
+    def test_escaped_braces_reported(self):
+        # {{name}} 只是字面量花括号，不含动态字段
+        self.assertIsNotNone(validate_filename_template("{{name}}"))
+
+    def test_positional_field_reported(self):
+        self.assertIsNotNone(validate_filename_template("{0}"))
 
 
 class TestBuildOutputPath(unittest.TestCase):

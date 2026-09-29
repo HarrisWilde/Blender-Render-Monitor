@@ -8,6 +8,8 @@ import textwrap
 import bpy
 from bpy.types import Panel, UIList
 
+from . import utils
+
 _STATUS_ICONS = {
     "PENDING": "TIME",
     "RENDERING": "RENDER_STILL",
@@ -149,6 +151,16 @@ class RM_PT_panel(Panel):
         box.label(text="批量渲染", icon="RENDER_STILL")
         box.prop(scene, "rm_output_dir")
         box.prop(scene, "rm_file_template")
+        # 模板即时校验 + 文件名示例：模板写坏（如 {name) 少个花括号）时当场报错，
+        # 而不是等渲染完才发现输出名莫名其妙带了序号（v1.5.9）。
+        template_error = utils.validate_filename_template(scene.rm_file_template)
+        if template_error:
+            _draw_wrapped(box, "⚠ " + template_error, icon="ERROR", width=44, max_lines=3)
+        else:
+            preview = utils.format_filename(
+                scene.rm_file_template, "快照", scene.frame_current, 1
+            )
+            box.label(text=f"文件名示例：{preview}.png", icon="INFO")
         row = box.row()
         row.prop(scene, "rm_use_snapshot_frame")
         row = box.row()

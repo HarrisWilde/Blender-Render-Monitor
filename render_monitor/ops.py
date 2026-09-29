@@ -399,6 +399,16 @@ def _start_subprocess_render(context, uids):
         if not scene.rm_output_dir or scene.rm_output_dir.startswith("//"):
             return False, "文件未保存：请在「输出目录」中选择一个绝对路径后再渲染"
 
+    # 文件名模板先校验再开渲染：模板写坏时（如 {name) 花括号只打了一半）宁可
+    # 明确报错，也不能静默套用默认模板 {name} {index}——否则用户看到的输出
+    # 文件名会莫名其妙带上一段序号，无从排查（v1.5.9 修复）。
+    template_error = utils.validate_filename_template(scene.rm_file_template)
+    if template_error:
+        return (
+            False,
+            f"文件命名模板无效：{template_error}（已取消本次渲染，未生成任何文件）",
+        )
+
     # 1. 导出快照数据（JSON）
     tmpdir = tempfile.mkdtemp(prefix="rm_render_")
     snapshots = []

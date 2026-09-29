@@ -201,6 +201,22 @@ class TestOpsExportIndex(unittest.TestCase):
         ) as f:
             return ok, msg, json.load(f)
 
+    def test_invalid_template_blocks_render(self):
+        """模板写坏（如 {name) 花括号只打了一半）时拒绝渲染并报出原因。
+
+        回归（v1.5.9）：旧实现会静默套用默认模板 {name} {index}，让快照名
+        `2NW20C5R（2ft-traic）/1` 输出成 `…/1_1.png`，用户完全无从排查。
+        """
+        self.scene.rm_file_template = "{name)"
+        uids = [s.uid for s in self.scene.rm_shots]
+        ok, msg, exported = self._run_export(uids)
+        self.assertFalse(ok)
+        self.assertIn("命名模板无效", msg)
+        self.assertIn("{name)", msg)
+        self.assertEqual(exported, [])
+        # 校验失败发生在导出/保存副本之前：不应留下临时目录
+        self.assertEqual(self.ops._active["tmpdir"], "")
+
     def test_index_is_list_position_for_selected(self):
         """按勾选过滤后，index 仍取列表原始位置（回归：中断后续跑编号不乱）。"""
         # 勾选第 2/4/5 个（shotB/shotD/shotE），不勾选其他

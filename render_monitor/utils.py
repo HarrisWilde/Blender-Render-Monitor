@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import os
 import re
+from string import Formatter
 
 # 文件名模板默认值：{name} = 快照名，{index} = 快照在列表中的顺序（从 1 开始），
 # {frame} = 帧号
 DEFAULT_FILE_TEMPLATE = "{name} {index}"
+
+# 模板里被支持的动态字段名（str.format 的字段名必须是这三个之一）
+_TEMPLATE_FIELDS = frozenset({"name", "frame", "index"})
 
 # 输出文件非法字符（Windows / Linux / macOS 通用）
 _INVALID_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -109,6 +113,63 @@ def adjust_name_number(name: str, delta: int) -> str:
     return head + number + tail
 
 
+def has_dynamic_field(template: str) -> bool:
+    """模板里是否含 {name} / {frame} / {index} 动态占位符。
+
+    用 `string.Formatter` 真正解析字段名，而不是做 `"{name}" in tpl` 子串匹配：
+    子串匹配会把 `{frame:04d}`、`{index:02d}`、`{name:>6}`、`{name!s}`、
+    `shot_{frame:04d}` 这类**带格式说明符/转换符/字面前缀**的合法模板误判成
+    "没有占位符"，从而静默套用默认模板 `{name} {index}`（表现为"设了模板，
+    输出却依然是 名字_序号"）。转义写法 `{{name}}`（字面量花括号）与
+    `{}`/`{0}`/已损坏的模板（落单花括号）都视为无动态字段，走回退。
+    """
+    try:
+        for _literal, field, _spec, _conv in Formatter().parse(template):
+            if field and field.split(".")[0].split("[")[0] in _TEMPLATE_FIELDS:
+                return True
+    except ValueError:  # 模板本身语法错误（如落单的 { 或 }）
+        return False
+    return False
+
+
+def validate_filename_template(template: str | None) -> str | None:
+    """校验文件名模板，返回给用户看的错误信息（合法或留空时返回 None）。
+
+    存在的意义：模板写坏时（花括号只写了一半，如把 `}` 打成 `)` 的 `{name)`、
+    未知占位符、完全没有占位符），旧实现会**静默套用默认模板
+    `{name} {index}`**，用户看到的是"设了 `{name}` 却输出 `1_1.png`"这种
+    无从排查的结果。现在渲染前先校验并直接把原因报给用户。
+    """
+    tpl = (template or "").strip()
+    if not tpl:
+        return None  # 留空 = 使用默认模板，合法
+    try:
+        fields = [field for _lit, field, _spec, _conv in Formatter().parse(tpl)]
+    except ValueError as exc:
+        # 常见成因：`{name)`（把 } 打成 )）、落单的 { 或 }
+        return (
+            f"花括号不匹配（{exc}）——请检查模板「{tpl}」里的 "
+            "{ 与 } 是否成对（例如把 } 打成了 )）"
+        )
+    unknown = [
+        field
+        for field in fields
+        if field and field.split(".")[0].split("[")[0] not in _TEMPLATE_FIELDS
+    ]
+    if unknown:
+        names = "、".join("{" + f + "}" for f in unknown)
+        return (
+            f"未知占位符 {names}（模板「{tpl}」）——只支持 "
+            "{name}（快照名）、{index}（列表序号）、{frame}（帧号）"
+        )
+    if not any(fields):
+        return (
+            f"模板「{tpl}」不含任何占位符，所有快照会输出到同一个文件互相覆盖"
+            "——请至少使用 {name} / {index} / {frame} 之一"
+        )
+    return None
+
+
 def format_filename(
     template: str | None,
     shot_name: str,
@@ -118,12 +179,13 @@ def format_filename(
     """按模板生成输出文件名（不含扩展名，可含子文件夹相对路径）。
 
     模板支持 {name}（快照名）、{index}（列表顺序，从 1 开始）、{frame}（帧号）
-    占位符。快照名里的 `/` 或 `\\` 会作为子文件夹分隔符保留；模板缺少任何
-    动态占位符（会导致所有快照输出同名互相覆盖）或格式错误时，自动回退默认
-    模板，保证返回安全相对路径。
+    占位符，可带格式说明符（如 {index:02d}、{frame:04d}）与转换符（如 {name!s}）。
+    快照名里的 `/` 或 `\\` 会作为子文件夹分隔符保留；模板缺少任何动态占位符
+    （会导致所有快照输出同名互相覆盖）或格式错误时，自动回退默认模板，保证
+    返回安全相对路径。
     """
     tpl = (template or DEFAULT_FILE_TEMPLATE).strip()
-    if "{name}" not in tpl and "{frame}" not in tpl and "{index}" not in tpl:
+    if not has_dynamic_field(tpl):
         tpl = DEFAULT_FILE_TEMPLATE
     # 先把 frame/index 归一化成安全 int：入参为 None 或非数字时置 0，
     # 避免回退分支里的 int() 再次抛出未捕获异常。
